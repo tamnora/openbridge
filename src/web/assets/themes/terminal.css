@@ -1,0 +1,28 @@
+/* terminal: opencode/codex-like — casi negro, mono, verde para el usuario */
+:root {
+    --bg: #0a0d12;
+    --panel: #0f131a;
+    --rail: #0c1016;
+    --theirs: #141a23;
+    --mine: #3fb950;
+    --mine-soft: rgba(63, 185, 80, .08);
+    --text: #c9d1d9;
+    --muted: #7d8590;
+    --border: #21262d;
+    --danger: #f85149;
+    --accent: #79c0ff;
+    --accent-soft: rgba(121, 192, 255, .12);
+    --shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    --code-bg: #0d1117;
+    --warn-bg: rgba(187, 128, 9, .16);
+    --warn-border: #9e6a03;
+    --warn-text: #d29922;
+    --info-bg: rgba(2, 55, 76, .16);
+    --info-border: #02374c;
+    --info-text: #7dbddb;
+    --success-bg: rgba(0, 128, 0, .16);
+    --success-border: #008000;
+    --success-text: #3fb950;
+    --ok: #3fb950;
+    --font: ui-monospace, "Cascadia Code", "JetBrains Mono", "SF Mono", "Fira Code", Consolas, "Roboto Mono", monospace;
+}

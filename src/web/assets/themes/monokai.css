@@ -1,0 +1,19 @@
+/* monokai: Monokai clásico — fondo carbón con verde lima y cian */
+:root {
+    --bg: #272822;
+    --panel: #2d2e27;
+    --rail: #1e1f1c;
+    --theirs: #34352f;
+    --mine: #a6e22e;
+    --mine-soft: rgba(166, 226, 46, .10);
+    --text: #f8f8f2;
+    --muted: #90908a;
+    --border: #3e3d32;
+    --danger: #f92672;
+    --accent: #66d9ef;
+    --accent-soft: rgba(102, 217, 239, .14);
+    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    --code-bg: #1f201b;
+    --warn-bg: rgba(249, 38, 114, .14);
+    --warn-border: #7c1338;
+}

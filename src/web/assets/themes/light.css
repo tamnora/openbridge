@@ -1,0 +1,18 @@
+/* light: gris claro/índigo */
+:root {
+    --bg: #f1f5f9;
+    --panel: #ffffff;
+    --mine: #4f46e5;
+    --theirs: #e2e8f0;
+    --text: #0f172a;
+    --muted: #64748b;
+    --border: #cbd5e1;
+    --danger: #dc2626;
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, .12);
+    --shadow: 0 4px 20px rgba(15, 23, 42, .08);
+    --code-bg: #f8fafc;
+    --warn-bg: rgba(220, 38, 38, .10);
+    --warn-border: #fca5a5;
+    --rail: #e2e8f0;
+}

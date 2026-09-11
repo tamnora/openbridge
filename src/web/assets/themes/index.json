@@ -1,0 +1,15 @@
+{
+  "themes": [
+    { "slug": "terminal", "label": "Terminal", "sw": ["#0a0d12", "#3fb950"] },
+    { "slug": "default", "label": "Oscuro", "sw": ["#0f172a", "#0ea5e9"] },
+    { "slug": "dark-plus", "label": "Dark+", "sw": ["#1e1e1e", "#3794ff"] },
+    { "slug": "monokai", "label": "Monokai", "sw": ["#272822", "#a6e22e"] },
+    { "slug": "one-dark", "label": "One Dark", "sw": ["#282c34", "#61afef"] },
+    { "slug": "dark-red", "label": "Carmesí", "sw": ["#14080a", "#ef4444"] },
+    { "slug": "light", "label": "Claro", "sw": ["#f1f5f9", "#4f46e5"] },
+    { "slug": "light-plus", "label": "Light+", "sw": ["#ffffff", "#007acc"] },
+    { "slug": "github-light", "label": "GitHub Claro", "sw": ["#ffffff", "#1a7f37"] },
+    { "slug": "solarized", "label": "Solarized", "sw": ["#fdf6e3", "#268bd2"] },
+    { "slug": "high-contrast", "label": "Alto contraste", "sw": ["#000000", "#ffffff"] }
+  ]
+}

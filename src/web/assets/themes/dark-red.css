@@ -1,0 +1,18 @@
+/* dark-red: carmesí/carbón */
+:root {
+    --bg: #14080a;
+    --panel: #1f1115;
+    --mine: #ef4444;
+    --theirs: #2d141a;
+    --text: #f3e8e8;
+    --muted: #b08888;
+    --border: #3a1d22;
+    --danger: #fb7185;
+    --accent: #f87171;
+    --accent-soft: rgba(248, 113, 113, .16);
+    --shadow: 0 10px 30px rgba(0, 0, 0, .55);
+    --code-bg: #0d0406;
+    --warn-bg: rgba(127, 29, 29, .35);
+    --warn-border: #b91c1c;
+    --rail: #1a0a0e;
+}

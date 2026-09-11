@@ -1,0 +1,49 @@
+{
+  "name": "openbridge",
+  "version": "0.1.0",
+  "description": "Tu opencode en el celular, sin hosting: corre la app, el puente y un tunel publico desde tu PC.",
+  "type": "commonjs",
+  "author": "tamnora",
+  "license": "MIT",
+  "homepage": "https://github.com/tamnora/openbridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tamnora/openbridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tamnora/openbridge/issues"
+  },
+  "keywords": [
+    "opencode",
+    "openbridge",
+    "tunnel",
+    "remote",
+    "mobile",
+    "pwa",
+    "cli",
+    "tunnelmole",
+    "ngrok",
+    "cloudflare"
+  ],
+  "bin": {
+    "openbridge": "bin/openbridge.js",
+    "openconex": "bin/openbridge.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/openbridge.js server",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}

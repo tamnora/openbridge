@@ -1,0 +1,19 @@
+/* light-plus: VSCode Light+ — blanco con azul clásico */
+:root {
+    --bg: #ffffff;
+    --panel: #f3f3f3;
+    --rail: #e9e9e9;
+    --theirs: #ececec;
+    --mine: #007acc;
+    --mine-soft: rgba(0, 122, 204, .08);
+    --text: #333333;
+    --muted: #6f6f6f;
+    --border: #dcdcdc;
+    --danger: #cd3131;
+    --accent: #005cc5;
+    --accent-soft: rgba(0, 92, 197, .12);
+    --shadow: 0 4px 20px rgba(0, 0, 0, .10);
+    --code-bg: #f7f7f7;
+    --warn-bg: rgba(205, 49, 49, .08);
+    --warn-border: #f0b1af;
+}

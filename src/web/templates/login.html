@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a" id="themeColor">
+    <title>OpenBridge · acceso</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/icon-192x192.png">
+    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152x152.png">
+    <link rel="stylesheet" href="themes/themes.css" id="themeStylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "Roboto Mono", monospace;
+            background: var(--bg); color: var(--text); min-height: 100vh; min-height: 100dvh;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 16px;
+        }
+        .card {
+            background: var(--panel); color: var(--text); border: 1px solid var(--border);
+            border-radius: 14px; padding: 26px 24px 20px; width: 100%;
+            max-width: 380px; box-shadow: var(--shadow);
+        }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand .logo { color: var(--mine); font-weight: 700; font-size: 17px; letter-spacing: -.05em; }
+        h1 { margin: 0; font-size: 18px; font-weight: 700; }
+        p.sub { margin: 2px 0 22px; color: var(--muted); font-size: 12.5px; }
+        .error {
+            background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--danger);
+            padding: 10px 12px; border-radius: 8px; font-size: 12.5px; margin-bottom: 16px;
+            animation: shake .35s ease;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        .field {
+            display: flex; align-items: center; gap: 8px;
+            border: 1px solid var(--border); border-radius: 10px;
+            background: var(--bg); padding: 0 12px; margin-bottom: 12px;
+            transition: border-color .15s ease;
+        }
+        .field:focus-within { border-color: var(--mine); }
+        .field .prompt { color: var(--mine); font-weight: 700; user-select: none; flex-shrink: 0; }
+        .field input {
+            flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text);
+            font: inherit; font-size: 15.5px; padding: 12px 0; outline: none;
+        }
+        .field input::placeholder { color: var(--muted); }
+        .peek {
+            background: transparent; border: 0; color: var(--muted); cursor: pointer;
+            font-size: 14px; padding: 4px 2px; flex-shrink: 0; line-height: 1;
+        }
+        .peek:hover, .peek.on { color: var(--accent); }
+        .keep {
+            display: flex; align-items: center; gap: 9px; cursor: pointer;
+            color: var(--muted); font-size: 12.5px; margin: 2px 0 18px; user-select: none;
+            position: relative;
+        }
+        .keep input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+        .keep .box {
+            width: 16px; height: 16px; border: 1px solid var(--border); border-radius: 4px;
+            background: var(--bg); display: inline-flex; align-items: center; justify-content: center;
+            color: var(--mine); font-size: 12px; line-height: 1; flex-shrink: 0;
+            transition: border-color .12s ease;
+        }
+        .keep input:checked + .box::after { content: "✓"; }
+        .keep:hover .box { border-color: var(--mine); }
+        .keep input:focus-visible + .box { border-color: var(--accent); }
+        button[type="submit"] {
+            width: 100%; padding: 12px; border: 0; border-radius: 10px; background: var(--mine);
+            color: #fff; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
+            letter-spacing: .02em;
+        }
+        button[type="submit"]:hover { filter: brightness(1.08); }
+        button[type="submit"]:active { transform: scale(.99); }
+        button[type="submit"]:disabled { opacity: .55; cursor: wait; }
+        .hint { text-align: center; color: var(--muted); opacity: .65; font-size: 10.5px; margin-top: 12px; }
+        @media (max-width: 479px) {
+            .card { padding: 22px 18px 16px; border-radius: 12px; }
+        }
+    </style>
+</head>
+<body data-theme="{{THEME}}">
+    <script>
+        (function () {
+            var knownThemes = {{THEMES_JSON}};
+            var params = new URLSearchParams(location.search);
+            var cookie = document.cookie.match(/(?:^|;\s*)ocx_theme=([^;]+)/);
+            var saved = (params.get('theme') || (cookie && decodeURIComponent(cookie[1])) || document.body.getAttribute('data-theme') || 'terminal');
+            if (knownThemes.indexOf(saved) === -1) saved = 'terminal';
+            document.body.setAttribute('data-theme', saved);
+            document.getElementById('themeStylesheet').setAttribute('href', 'themes/' + saved + '.css');
+            document.cookie = 'ocx_theme=' + encodeURIComponent(saved) + ';path=/;max-age=' + (60 * 60 * 24 * 365) + ';SameSite=Lax';
+            window.addEventListener('load', function () {
+                var bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+                if (bg) document.getElementById('themeColor').setAttribute('content', bg);
+            });
+        })();
+    </script>
+    <form class="card" method="post" autocomplete="on">
+        <div class="brand">
+            <span class="logo">❯_</span>
+            <h1>OpenBridge</h1>
+        </div>
+        <p class="sub">Tu opencode en el celular</p>
+        {{ERROR_BLOCK}}
+        <input type="hidden" name="csrf" value="{{CSRF}}">
+        <label class="field">
+            <span class="prompt">❯</span>
+            <input type="text" id="username" name="username" placeholder="usuario" required autofocus
+                   autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </label>
+        <label class="field">
+            <span class="prompt">❯</span>
+            <input type="password" id="password" name="password" placeholder="contraseña" required autocomplete="current-password">
+            <button type="button" class="peek" id="btnPeek" aria-label="Mostrar u ocultar contraseña" tabindex="-1">👁</button>
+        </label>
+        <label class="keep" for="keep">
+            <input type="checkbox" id="keep" name="keep" value="1" checked>
+            <span class="box"></span>
+            mantener la sesión abierta
+        </label>
+        <button type="submit" id="btnEnter">Entrar</button>
+        <div class="hint">openbridge · puente celular ↔ opencode</div>
+    </form>
+    <script>
+        (function () {
+            var pw = document.getElementById('password');
+            var peek = document.getElementById('btnPeek');
+            peek.addEventListener('click', function () {
+                var show = pw.type === 'password';
+                pw.type = show ? 'text' : 'password';
+                peek.classList.toggle('on', show);
+                pw.focus();
+            });
+            var form = document.querySelector('form.card');
+            form.addEventListener('submit', function () {
+                var b = document.getElementById('btnEnter');
+                b.disabled = true;
+                b.textContent = 'entrando…';
+            });
+        })();
+    </script>
+</body>
+</html>

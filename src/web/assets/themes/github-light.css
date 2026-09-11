@@ -1,0 +1,19 @@
+/* github-light: GitHub Light — blanco con verde y azul GitHub */
+:root {
+    --bg: #ffffff;
+    --panel: #f6f8fa;
+    --rail: #eaeef2;
+    --theirs: #eff2f5;
+    --mine: #1a7f37;
+    --mine-soft: rgba(26, 127, 55, .08);
+    --text: #1f2328;
+    --muted: #656d76;
+    --border: #d0d7de;
+    --danger: #cf222e;
+    --accent: #0969da;
+    --accent-soft: rgba(9, 105, 218, .10);
+    --shadow: 0 4px 20px rgba(31, 35, 40, .08);
+    --code-bg: #f6f8fa;
+    --warn-bg: rgba(207, 34, 46, .08);
+    --warn-border: #f0b3b5;
+}

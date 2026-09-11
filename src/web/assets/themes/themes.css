@@ -1,0 +1,2 @@
+/* themes.css: aplica el default (terminal) como fallback; JS carga el activo. */
+@import url("terminal.css");

@@ -1,0 +1,18 @@
+/* high-contrast: blanco/negro, alto contraste */
+:root {
+    --bg: #000000;
+    --panel: #0a0a0a;
+    --mine: #ffffff;
+    --theirs: #1a1a1a;
+    --text: #ffffff;
+    --muted: #cfcfcf;
+    --border: #ffffff;
+    --danger: #ffd400;
+    --accent: #ffd400;
+    --accent-soft: rgba(255, 212, 0, .22);
+    --shadow: 0 0 0 2px #ffffff;
+    --code-bg: #111111;
+    --warn-bg: rgba(255, 212, 0, .18);
+    --warn-border: #ffd400;
+    --rail: #050505;
+}

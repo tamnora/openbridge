@@ -1,0 +1,23 @@
+# Dependencias
+node_modules/
+
+# Casa portable: configuracion y datos locales (por instalacion)
+config.json
+app.json
+folders.json
+mode.txt
+sync-state.json
+.procs.json
+.openbridge.pid
+.bridge.pid
+runtime.json
+data/
+logs/
+*.log
+
+# Empaquetados
+*.tgz
+
+# Sistema
+.DS_Store
+Thumbs.db

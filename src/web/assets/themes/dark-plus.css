@@ -1,0 +1,19 @@
+/* dark-plus: VSCode Dark+ — azul oscuro neutro con azules clásicos */
+:root {
+    --bg: #1e1e1e;
+    --panel: #252526;
+    --rail: #181818;
+    --theirs: #2d2d30;
+    --mine: #3794ff;
+    --mine-soft: rgba(55, 148, 255, .10);
+    --text: #d4d4d4;
+    --muted: #8a8a8a;
+    --border: #3c3c3c;
+    --danger: #f48771;
+    --accent: #569cd6;
+    --accent-soft: rgba(86, 156, 214, .16);
+    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    --code-bg: #1b1b1b;
+    --warn-bg: rgba(244, 135, 113, .12);
+    --warn-border: #6e3b2f;
+}

@@ -1,0 +1,18 @@
+/* default: azul/gris oscuro (paleta original) */
+:root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --mine: #0ea5e9;
+    --theirs: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #334155;
+    --danger: #f87171;
+    --accent: #38bdf8;
+    --accent-soft: rgba(56, 189, 248, .14);
+    --shadow: 0 10px 30px rgba(0, 0, 0, .4);
+    --code-bg: #0b1220;
+    --warn-bg: rgba(127, 29, 29, .28);
+    --warn-border: #7f1d1d;
+    --rail: #111c30;
+}

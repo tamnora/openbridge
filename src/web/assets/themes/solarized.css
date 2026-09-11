@@ -1,0 +1,18 @@
+/* solarized: crema/índigo apagado (tonos cálidos) */
+:root {
+    --bg: #fdf6e3;
+    --panel: #eee8d5;
+    --mine: #268bd2;
+    --theirs: #e3dcc4;
+    --text: #073642;
+    --muted: #657b83;
+    --border: #d6cfb6;
+    --danger: #dc322f;
+    --accent: #2aa198;
+    --accent-soft: rgba(42, 161, 152, .18);
+    --shadow: 0 10px 30px rgba(0, 0, 0, .15);
+    --code-bg: #f5efdc;
+    --warn-bg: rgba(220, 50, 47, .12);
+    --warn-border: #cb4b16;
+    --rail: #ece4ce;
+}
