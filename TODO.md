@@ -96,8 +96,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 ## 8. Empaquetado / publicación
 
 - [x] Completar `package.json`: `author`, `repository`, `homepage`, `keywords`, `bugs`.
-- [ ] Publicar en **npm público** como `openbridge` (nombre libre).
-- [ ] Crear repo en **GitHub** (`tamnora/openbridge`) y pushear.
+- [x] Publicar en **npm** como `@danieltmn/openbridge` (`openbridge` a secas está bloqueado por similitud con `open-bridge`).
+- [x] Crear repo en **GitHub** (`tamnora/openbridge`) y pushear.
 - [x] `openbridge version`.
 - [x] CI (GitHub Actions): `npm test` en Windows/Linux/macOS.
 - [x] `CHANGELOG.md` (falta guía de contribución).

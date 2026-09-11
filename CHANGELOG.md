@@ -6,7 +6,9 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 
 ## [0.1.0] - 2026-09-11
 
-Primera version publicada (npm + GitHub).
+Primera version publicada. Paquete npm **`@danieltmn/openbridge`** y repo
+**`tamnora/openbridge`** en GitHub (el nombre `openbridge` a secas esta bloqueado
+por npm por similitud con `open-bridge`).
 
 ### Agregado
 

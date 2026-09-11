@@ -1,8 +1,8 @@
 # OpenBridge
 
-[![npm](https://img.shields.io/npm/v/openbridge.svg)](https://www.npmjs.com/package/openbridge)
+[![npm](https://img.shields.io/npm/v/@danieltmn/openbridge.svg)](https://www.npmjs.com/package/@danieltmn/openbridge)
 [![CI](https://github.com/tamnora/openbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/tamnora/openbridge/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/openbridge.svg)](LICENSE)
+[![license](https://img.shields.io/npm/l/@danieltmn/openbridge.svg)](LICENSE)
 
 Tu **opencode** en el celular, **sin hosting**: corre la app, el puente y un
 túnel público desde tu PC. El celular entra por la URL del túnel y vos manejás
@@ -34,11 +34,11 @@ opencode (tus carpetas, modelos y chats) desde donde estés.
 
 ```bash
 # opción 1: sin instalar nada (npx)
-npx openbridge init      # asistente: workspace, contraseña, túnel, puerto
-npx openbridge server    # arranca en segundo plano y muestra el estado/URL
+npx @danieltmn/openbridge init      # asistente: workspace, contraseña, túnel, puerto
+npx @danieltmn/openbridge server    # arranca en segundo plano y muestra el estado/URL
 
 # opción 2: instalar global
-npm i -g openbridge
+npm i -g @danieltmn/openbridge
 openbridge init
 openbridge server
 ```
