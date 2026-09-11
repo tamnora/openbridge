@@ -18,7 +18,7 @@ local a internet.
 | Ruta | Responsabilidad |
 |---|---|
 | `bin/openbridge.js` | Entrada CLI + guard de Node. |
-| `src/cli.js` | Comandos (`init`, `server`, `stop`, `status`, `logs`, `bridge`, `import`, `reset`, `autostart`, `doctor`). |
+| `src/cli.js` | Comandos (`init`, `passwd`, `server`, `stop`, `status`, `logs`, `bridge`, `import`, `reset`, `autostart`, `doctor`). |
 | `src/paths.js` | Casa portable: ubicacion de `config.json`, `app.json`, `data/`, `logs/`. |
 | `src/config.js` | Lectura/escritura de config, hash scrypt, VAPID. |
 | `src/auth.js` | Cookie de sesion firmada, CSRF, remember-me, rate limit, token del puente. |

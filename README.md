@@ -56,6 +56,7 @@ elegiste en `init`.
 | Comando | Qué hace |
 |---|---|
 | `openbridge init` | Configura la casa (workspace, contraseña, túnel, puerto) |
+| `openbridge passwd` | Cambia la contraseña de acceso (detiene el server si corre) |
 | `openbridge server` | Arranca app + puente + túnel (foreground; `--detach` para segundo plano) |
 | `openbridge stop` | Detiene el server y su árbol de procesos |
 | `openbridge status` | Estado, URL, puente en línea y chats |

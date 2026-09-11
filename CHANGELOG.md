@@ -20,9 +20,18 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 - `src/log.js` ahora escribe `logs/server.log` de verdad.
 - Tests de auth, API y `safeJoinWorkspace`; CI en Windows/Linux/macOS.
 - `docs/ARCHITECTURE.md`, `CHANGELOG.md` y `AGENTS.md`.
+- Consumo de tokens y **capacidad de contexto** por sesion (el puente sincroniza
+  `models_ctx` desde `opencode models --verbose`; el sidebar y el encabezado
+  muestran `consumidos/capacidad`).
+- Comando `passwd` (alias `password`) para cambiar la contrasena sin reconfigurar todo.
 
 ### Cambiado
 
+- **Login solo con contrasena**: se quito el campo de usuario (es un unico
+  `admin`); la pagina pide unicamente la contrasena.
+- `init --force` y `passwd` **detienen un server en ejecucion** antes de
+  reescribir la config, para no dejar un proceso con la contrasena vieja en
+  memoria (causa de "Contrasena incorrecta" tras reconfigurar).
 - `init`: contrasena oculta al escribir, resumen con credenciales/URL, y
   validacion del proveedor de tunel. El escaneo de carpetas excluye `data/` y
   `logs/` cuando el workspace es la propia casa.

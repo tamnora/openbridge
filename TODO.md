@@ -36,6 +36,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] `logs --follow` y `logs --bridge`/`--server`.
 - [x] Mensaje claro cuando el **puerto está ocupado**.
 - [x] Guard de **Node < 18** con mensaje amigable.
+- [x] **Login solo con contrasena** (sin campo de usuario).
+- [x] Ver **tokens consumidos y capacidad de contexto** por sesion (sidebar y encabezado).
 
 ## 2. Túnel y URL estable (PWA / Web Push)
 
@@ -55,6 +57,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] **`server --detach`** (segundo plano).
 - [ ] Chequear **instancia ya corriendo** al hacer `server` (hoy solo lo evita el puerto ocupado).
 - [x] **`stop` robusto**: mata el árbol completo (Windows `taskkill /T`; POSIX grupo detached).
+- [x] **`passwd`**: cambia la contraseña y detiene el server en ejecución.
+- [x] `init --force`/`passwd` detienen el server antes de reescribir la config.
 - [ ] `openbridge update` (auto-actualización) — opcional.
 
 ## 4. Multi-PC (hub + remotas)

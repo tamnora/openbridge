@@ -316,6 +316,7 @@ function catalogDefault() {
         folders: [],
         models: [],
         models_full: {},
+        models_ctx: {},
         vision: [],
         workspace: '',
         allow_create_folders: false,
@@ -348,11 +349,12 @@ function catalogVersion(cat) {
     }
     return md5(JSON.stringify(sig));
 }
-async function syncCatalog(folders, models, workspace, allowCreateFolder, agents, modelsFull, vision, file) {
+async function syncCatalog(folders, models, workspace, allowCreateFolder, agents, modelsFull, vision, modelsCtx, file) {
     const fresh = catalogDefault();
     fresh.folders = Array.isArray(folders) ? folders : [];
     fresh.models = Array.isArray(models) ? models : [];
     fresh.models_full = (modelsFull && typeof modelsFull === 'object') ? modelsFull : {};
+    fresh.models_ctx = (modelsCtx && typeof modelsCtx === 'object') ? modelsCtx : {};
     fresh.vision = Array.isArray(vision) ? vision : [];
     fresh.workspace = String(workspace || '');
     fresh.allow_create_folders = !!allowCreateFolder;
@@ -429,6 +431,14 @@ function modelInCatalogObj(cat, model) {
 }
 async function modelInCatalog(model, file) {
     return modelInCatalogObj(await catalogRead(file), model);
+}
+// Ventana de contexto del modelo (0 si no se conoce).
+function modelContextObj(cat, model) {
+    const v = (cat.models_ctx || {})[model];
+    return (typeof v === 'number' && v > 0) ? v : 0;
+}
+async function modelContext(model, file) {
+    return modelContextObj(await catalogRead(file), model);
 }
 function agentInCatalogObj(cat, agent) {
     return (cat.agents || []).includes(agent);
@@ -906,6 +916,7 @@ module.exports = {
     catalogDefault, catalogRead, catalogModify, catalogVersion, syncCatalog,
     validFolderName, catalogAddRequest, catalogClaimRequests, catalogFinishRequest,
     folderPathInCatalog, modelInCatalog, agentInCatalog, catalogWorkspaceRoot,
+    modelContext, modelContextObj,
     // puentes
     bridgesMap, bridgeRegistryUpsert, bridgeRegistryGet, bridgeOnlineLive, bridgeBusySession,
     bridgesSummary, soleBridgeId, bridgeLiveOverlay, adoptSessionsToBridge, bridgeRegisterFirst,

@@ -117,6 +117,20 @@ function clearRuntime() {
     }
 }
 
+// Detiene el server en ejecucion (si lo hay) matando server + hijos. Devuelve
+// true si habia uno. Se usa antes de reconfigurar para no dejar un proceso con
+// la config vieja en memoria (p.ej. la contrasena).
+function stopRunningServer() {
+    const rt = readRuntime();
+    if (!rt || !pidAlive(rt.pid)) { clearRuntime(); return false; }
+    killPid(rt.pid);
+    if (Array.isArray(rt.children)) {
+        for (const c of rt.children) killPid(c);
+    }
+    clearRuntime();
+    return true;
+}
+
 async function scanFolders(workspace) {
     const out = [];
     const skip = new Set();
@@ -150,6 +164,10 @@ async function cmdInit(argv) {
         console.log('Ya existe una configuracion en ' + home);
         console.log('Usa --force para reconfigurar (se pisan config.json/app.json).');
         return 0;
+    }
+
+    if (stopRunningServer()) {
+        console.log('Habia un server corriendo; lo detuve para reconfigurar (reinicialo con `openbridge server`).');
     }
 
     const cwd = process.cwd();
@@ -540,6 +558,33 @@ async function cmdReset(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// passwd: cambia la contrasena sin reconfigurar todo
+// ---------------------------------------------------------------------------
+async function cmdPasswd(argv) {
+    const { flags } = parseArgs(argv);
+    if (!paths.exists()) {
+        console.error('No hay configuracion en ' + paths.home() + '. Corre primero: openbridge init');
+        return 1;
+    }
+    const app = config.readApp();
+    const interactive = !flags.yes && process.stdin.isTTY;
+    let password = flags.password || '';
+    if (!password && interactive) password = await askHidden('Nueva contrasena (enter = generar): ');
+    let generated = false;
+    if (!password) {
+        password = config.randomToken(12);
+        generated = true;
+    }
+    if (stopRunningServer()) console.log('Habia un server corriendo; lo detuve para aplicar el cambio.');
+    app.password = config.hashPassword(password);
+    config.writeApp(app);
+    console.log('Contrasena actualizada para "' + app.username + '".');
+    console.log('  contrasena: ' + password + (generated ? '  (generada)' : ''));
+    console.log('  volve a arrancar: openbridge server');
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // autostart
 // ---------------------------------------------------------------------------
 function autostartPath() {
@@ -654,6 +699,7 @@ function usage() {
     console.log('Uso: openbridge <comando> [opciones]');
     console.log('');
     console.log('  init      Configura la casa (workspace, contrasena, tunel)');
+    console.log('  passwd    Cambia la contrasena de acceso (--password <clave>)');
     console.log('  server    Arranca la app + el puente + el tunel publico');
     console.log('  stop      Detiene el server en segundo plano');
     console.log('  status    Estado del server, puente y chats');
@@ -676,6 +722,7 @@ async function main(argv) {
     const cmd = args[0];
     switch (cmd) {
         case 'init': return cmdInit(args.slice(1));
+        case 'passwd': case 'password': return cmdPasswd(args.slice(1));
         case 'server': case 'start': return cmdServer(args.slice(1));
         case 'stop': return cmdStop();
         case 'status': return cmdStatus();

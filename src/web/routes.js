@@ -97,16 +97,15 @@ async function handleLogin({ app, req, res, query, form }) {
         const mins = Math.max(1, Math.ceil(locked / 60));
         return renderError('Demasiados intentos fallidos. Proba de nuevo en ' + mins + ' min.');
     }
-    const username = String(form.username || '').trim();
     const password = String(form.password || '');
-    if (username === app.username && config.verifyPassword(password, app.password)) {
+    if (config.verifyPassword(password, app.password)) {
         auth.loginClear(req);
         auth.startSession(app, req, res, app.username);
         res.writeHead(302, { Location: 'chat.php' });
         return res.end();
     }
     auth.loginRecordFailure(req);
-    return renderError('Usuario o contrasena incorrectos.');
+    return renderError('Contrasena incorrecta.');
 }
 
 async function handleChat({ app, req, res, query }) {
@@ -394,7 +393,19 @@ async function handleApi(ctx) {
                 .filter((a) => typeof a === 'string' && a.trim() !== '').map((a) => store.mbSubstr(a.trim(), 0, 40)).slice(0, 20);
             const vision = [...new Set((Array.isArray(body.vision) ? body.vision : [])
                 .filter((m) => typeof m === 'string' && m.trim() !== '').map((m) => store.mbSubstr(m.trim(), 0, 160)))].slice(0, 800);
-            await store.syncCatalog(folders.slice(0, 200), models.slice(0, 400), workspace, allowCreate, agents, modelsFull, vision, file);
+            const modelsCtx = {};
+            if (body.models_ctx && typeof body.models_ctx === 'object') {
+                let count = 0;
+                for (const key of Object.keys(body.models_ctx)) {
+                    if (count >= 2000) break;
+                    if (typeof key !== 'string' || key.trim() === '') continue;
+                    const v = parseInt(body.models_ctx[key], 10);
+                    if (!(v > 0)) continue;
+                    modelsCtx[store.mbSubstr(key.trim(), 0, 160)] = v;
+                    count++;
+                }
+            }
+            await store.syncCatalog(folders.slice(0, 200), models.slice(0, 400), workspace, allowCreate, agents, modelsFull, vision, modelsCtx, file);
             return ok({ ok: true, folders: folders.length, models: models.length, models_full: Object.keys(modelsFull).length, agents: agents.length });
         }
         case 'session_import': {

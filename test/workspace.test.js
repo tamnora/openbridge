@@ -19,7 +19,7 @@ test('safeJoinWorkspace: permite dentro y bloquea traversal', async () => {
 
     await store.syncCatalog(
         [{ name: 'proj', path: path.join(root, 'proj') }],
-        ['m/a'], root, true, ['build'], {}, [], paths.catalogFile()
+        ['m/a'], root, true, ['build'], {}, [], {}, paths.catalogFile()
     );
 
     const file = paths.catalogFile();

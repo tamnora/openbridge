@@ -42,9 +42,19 @@ test('store: catalogo por puente', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-'));
     paths.setHome(dir);
     paths.ensureDirs();
-    await store.syncCatalog([{ name: 'proj', path: 'C:\\proj' }], ['m/a'], 'C:\\', true, ['build', 'plan'], {}, [], paths.bridgeCatalogFile('pc2'));
+    await store.syncCatalog([{ name: 'proj', path: 'C:\\proj' }], ['m/a'], 'C:\\', true, ['build', 'plan'], {}, [], {}, paths.bridgeCatalogFile('pc2'));
     assert.notEqual(await store.folderPathInCatalog('C:\\proj', paths.bridgeCatalogFile('pc2')), null);
     assert.equal(await store.folderPathInCatalog('C:\\proj', paths.bridgeCatalogFile('pc1')), null);
     assert.equal(await store.modelInCatalog('m/a', paths.bridgeCatalogFile('pc2')), true);
+    fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('store: ventana de contexto por modelo', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-'));
+    paths.setHome(dir);
+    paths.ensureDirs();
+    await store.syncCatalog([], ['m/a'], '', false, ['build'], {}, [], { 'm/a': 200000 }, paths.catalogFile());
+    assert.equal(await store.modelContext('m/a', paths.catalogFile()), 200000);
+    assert.equal(await store.modelContext('m/desconocido', paths.catalogFile()), 0);
     fs.rmSync(dir, { recursive: true, force: true });
 });

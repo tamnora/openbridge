@@ -757,6 +757,33 @@ function fmtTokens(n) {
     return String(n);
 }
 
+// Ventana de contexto del modelo segun el catalogo (0 si no se conoce).
+function modelContext(model) {
+    var c = state.catalog || {};
+    var map = (c.models_ctx && typeof c.models_ctx === 'object') ? c.models_ctx : {};
+    var v = map[model];
+    return (typeof v === 'number' && v > 0) ? v : 0;
+}
+
+// Etiqueta "consumidos / capacidad" de la sesion.
+function sessionTokensHtml(s) {
+    var tok = Math.round(Number(s.tokens) || 0);
+    var ctx = modelContext(s.model);
+    if (!tok && !ctx) return '';
+    var label = fmtTokens(tok) + (ctx ? '/' + fmtTokens(ctx) : '');
+    var title = tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '');
+    return '<span class="stok" title="' + title + '">' + label + '</span>';
+}
+
+// Subtitulo del encabezado: proyecto · modelo · agente · tokens/contexto.
+function sessionSubtitle(s) {
+    var txt = projectLabel(s.folder) + ' · ' + (s.model || 'sin modelo') + ' · ' + (s.agent || 'build');
+    var tok = Math.round(Number(s.tokens) || 0);
+    var ctx = modelContext(s.model);
+    if (tok || ctx) txt += ' · ' + fmtTokens(tok) + (ctx ? '/' + fmtTokens(ctx) : '') + ' tok';
+    return txt;
+}
+
 // Actividad agregada de un grupo de sesiones: 'working' / 'waiting' / ''.
 function groupActivity(list) {
     var working = false;
@@ -777,7 +804,7 @@ function sessionItemHtml(s, withFolder) {
         + '<span class="sname">' + nameHtml + '</span>'
         + (withFolder ? '<span class="sfolder">' + esc(projectLabel(s.folder)) + '</span>' : '')
         + pen
-        + (s.tokens ? '<span class="stok" title="' + s.tokens + ' tokens">' + fmtTokens(s.tokens) + '</span>' : '')
+        + sessionTokensHtml(s)
         + '<span class="stime">' + esc(timeShort(s.last_ts)) + '</span>'
         + '</button>';
 }
@@ -1674,7 +1701,7 @@ function renderChat(session, messages) {
         state.currentSession = session;
         if (session.folder) state.lastFolder = session.folder;
         els.hTitle.textContent = session.name || 'chat';
-        els.hSub.textContent = projectLabel(session.folder) + ' · ' + (session.model || 'sin modelo') + ' · ' + (session.agent || 'build');
+        els.hSub.textContent = sessionSubtitle(session);
     }
     var msgs = state.messages;
     var chatQuery = (state.chatSearch && state.chatSearch.query) || '';
@@ -2236,7 +2263,7 @@ els.btnModelSave.addEventListener('click', async function () {
     els.btnModelSave.disabled = false;
     if (data.ok && data.session) {
         state.currentSession = data.session;
-        els.hSub.textContent = projectLabel(data.session.folder) + ' · ' + (data.session.model || 'sin modelo') + ' · ' + (data.session.agent || 'build');
+        els.hSub.textContent = sessionSubtitle(data.session);
         updateStatusbar();
         closeModelModal();
     } else {
@@ -2260,7 +2287,7 @@ async function toggleAgent() {
     var data = await api('api.php?action=session_update', apiCsrf('POST', { id: state.currentId, agent: next }));
     if (data.ok && data.session) {
         state.currentSession = data.session;
-        els.hSub.textContent = projectLabel(data.session.folder) + ' · ' + (data.session.model || 'sin modelo') + ' · ' + (data.session.agent || 'build');
+        els.hSub.textContent = sessionSubtitle(data.session);
         updateStatusbar();
         els.sbModel.classList.remove('flash');
         void els.sbModel.offsetWidth; // reinicia la animación

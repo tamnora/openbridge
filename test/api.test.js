@@ -72,7 +72,7 @@ test('API: ping publico, login y endpoints protegidos', async (t) => {
     config.writeApp(app);
     await store.syncCatalog(
         [{ name: 'proj', path: projPath }],
-        ['m/a'], root, true, ['build'], {}, [], paths.catalogFile()
+        ['m/a'], root, true, ['build'], {}, [], {}, paths.catalogFile()
     );
 
     const server = web.createServer(app);
@@ -97,7 +97,7 @@ test('API: ping publico, login y endpoints protegidos', async (t) => {
     const csrf = /name="csrf" value="([^"]+)"/.exec(page.body)[1];
     assert.ok(csrf);
 
-    const form = 'csrf=' + encodeURIComponent(csrf) + '&username=admin&password=secreta';
+    const form = 'csrf=' + encodeURIComponent(csrf) + '&password=secreta';
     const login = await request(port, {
         method: 'POST', url: '/login.php',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(jar), 'Content-Length': Buffer.byteLength(form) },

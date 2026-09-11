@@ -1158,10 +1158,16 @@ async function syncCatalog(opts) {
         const agents = resolveAgents();
         const caps = await getModelCaps();
         const vision = Object.keys(caps).filter((k) => caps[k].vision);
+        const modelsCtx = {};
+        for (const k of Object.keys(caps)) {
+            const c = caps[k] && caps[k].ctx;
+            if (typeof c === 'number' && c > 0) modelsCtx[k] = c;
+        }
         const payload = {
             folders: folders,
             models: models,
             models_full: full.groups,
+            models_ctx: modelsCtx,
             vision: vision,
             workspace: config.workspace || '',
             allowCreateFolders: !!config.allowCreateFolders,
