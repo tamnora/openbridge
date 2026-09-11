@@ -3,7 +3,7 @@
 ## Vision general
 
 ```
-[Celular] -- HTTPS --> [Tunel] --> [App Node: src/web] -- JSON --> [data/]
+[Celular] -- HTTPS --> [Tunel] --> [App Node: src/web] -- JSON --> [.openbridge/data/]
                                         |
                                         +--> [Puente: src/bridge] -- CLI --> [opencode]
 ```
@@ -11,7 +11,8 @@
 Un unico runtime (**Node 18+**). La app web, la API y los datos viven en el
 mismo proceso; el puente es un proceso hijo que ejecuta `opencode run` en las
 carpetas del workspace. El tunel (TunnelMole/ngrok/cloudflared) expone la app
-local a internet.
+local a internet. `openbridge server` arranca todo en segundo plano (y muestra
+el estado); `--stream` lo deja en primer plano.
 
 ## Modulos
 
@@ -33,7 +34,8 @@ local a internet.
 
 ## Casa portable
 
-Todo vive en el directorio de `init` (o `--dir` / `OPENBRIDGE_HOME`):
+La "base" es el directorio de `init` (o `--dir` / `OPENBRIDGE_HOME`). Todos los
+archivos de OpenBridge viven dentro de `<base>/.openbridge/`:
 
 ```
 config.json    config del puente
@@ -43,6 +45,11 @@ data/          sesiones, mensajes, catalogos por PC, registro de puentes, push
 logs/          server.log, bridge.log
 runtime.json   estado del server en ejecucion (pid, URL, hijos)
 ```
+
+`paths.migrate()` mueve automaticamente el layout viejo (archivos sueltos en la
+base) a `.openbridge/`; `data/` y `logs/` solo se mueven si tienen marcas de
+OpenBridge. La CLI pasa la **base** (`--dir`/cwd) al puente via
+`OPENBRIDGE_HOME`, y el puente le agrega `.openbridge`.
 
 ## Flujo de un mensaje
 

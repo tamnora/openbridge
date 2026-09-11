@@ -217,7 +217,11 @@ function updateStatusbar() {
     if (info && bridgeList().length >= 2) {
         extra = (info.name || info.id) + ' · ' + extra;
     }
-    if (state.currentId !== null && state.currentSession) extra = '· ' + extra;
+    if (state.currentId !== null && state.currentSession) {
+        extra = '· ' + extra;
+        var tokTxt = sessionTokensLabel(state.currentSession);
+        if (tokTxt) extra += ' · ' + tokTxt + ' tok';
+    }
     els.sbExtra.textContent = extra;
 }
 
@@ -765,22 +769,31 @@ function modelContext(model) {
     return (typeof v === 'number' && v > 0) ? v : 0;
 }
 
-// Etiqueta "consumidos / capacidad" de la sesion.
-function sessionTokensHtml(s) {
+// Etiqueta "consumidos/capacidad" en texto plano ('' si no hay datos).
+function sessionTokensLabel(s) {
     var tok = Math.round(Number(s.tokens) || 0);
     var ctx = modelContext(s.model);
     if (!tok && !ctx) return '';
-    var label = fmtTokens(tok) + (ctx ? '/' + fmtTokens(ctx) : '');
-    var title = tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '');
-    return '<span class="stok" title="' + title + '">' + label + '</span>';
+    return fmtTokens(tok) + (ctx ? '/' + fmtTokens(ctx) : '');
+}
+function sessionTokensTitle(s) {
+    var tok = Math.round(Number(s.tokens) || 0);
+    var ctx = modelContext(s.model);
+    return tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '');
+}
+
+// Etiqueta "consumidos / capacidad" de la sesion.
+function sessionTokensHtml(s) {
+    var label = sessionTokensLabel(s);
+    if (!label) return '';
+    return '<span class="stok" title="' + sessionTokensTitle(s) + '">' + label + '</span>';
 }
 
 // Subtitulo del encabezado: proyecto · modelo · agente · tokens/contexto.
 function sessionSubtitle(s) {
     var txt = projectLabel(s.folder) + ' · ' + (s.model || 'sin modelo') + ' · ' + (s.agent || 'build');
-    var tok = Math.round(Number(s.tokens) || 0);
-    var ctx = modelContext(s.model);
-    if (tok || ctx) txt += ' · ' + fmtTokens(tok) + (ctx ? '/' + fmtTokens(ctx) : '') + ' tok';
+    var label = sessionTokensLabel(s);
+    if (label) txt += ' · ' + label + ' tok';
     return txt;
 }
 
@@ -1673,7 +1686,8 @@ function updateProcRow(msgs) {
             var lbl = document.getElementById('proc-label');
             if (lbl) {
                 var txt = state.online ? (isMobileView() ? 'trabajando...' : 'opencode está trabajando...') : 'esperando el puente...';
-                lbl.textContent = (warn ? '⚠ ' : '') + txt;
+                var tokTxt = sessionTokensLabel(state.currentSession || {});
+                lbl.textContent = (warn ? '⚠ ' : '') + txt + (tokTxt ? ' · ' + tokTxt + ' tok' : '');
             }
             var tm = document.getElementById('proc-time');
             if (tm) tm.textContent = sec + 's';

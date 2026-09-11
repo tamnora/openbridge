@@ -7,8 +7,10 @@ Guia para agentes que trabajen en este repo.
 - Instalar deps: `npm install`
 - Tests: `npm test` (usa `node --test`; debe pasar en Windows/Linux/macOS)
 - Correr la app: `node bin/openbridge.js init --yes --dir <casa>` y
-  `node bin/openbridge.js server --no-tunnel`
+  `node bin/openbridge.js server --no-tunnel` (segundo plano; `--stream` para
+  primer plano). Detener: `node bin/openbridge.js stop --dir <casa>`
 - Estado/logs: `node bin/openbridge.js status` / `logs --follow`
+- Publicar: `npm publish` (previa `npm login`); GitHub: `gh repo create`.
 
 No hay linter todavia. Antes de cerrar un cambio, corre `npm test` y
 `node --check` sobre los archivos JS tocados.
@@ -35,7 +37,7 @@ No hay linter todavia. Antes de cerrar un cambio, corre `npm test` y
 
 ## Reglas
 
-- No commitear `config.json`, `app.json`, `data/`, `logs/` (estan en
-  `.gitignore`).
+- No commitear `.openbridge/` ni los archivos legacy (`config.json`, `app.json`,
+  `data/`, `logs/`); estan en `.gitignore`.
 - Mantener `TODO.md` y `CHANGELOG.md` al dia cuando cierres un pendiente.
 - No hacer commit ni push salvo que el usuario lo pida.

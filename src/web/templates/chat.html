@@ -662,37 +662,42 @@
         }
         .procrow.warn .proc-time { color: var(--warn-text, #fbbf24); }
         .kitt {
-            --scan-w: 2px;
+            --kitt-w: 22%;
+            --kitt-color: var(--accent);
             position: relative; flex: 0 0 auto;
             width: clamp(60px, 16vw, 120px); height: 16px;
-        }
-        .kitt-scan {
-            position: absolute; top: 0; bottom: 0; left: 0;
-            width: var(--scan-w); border-radius: 1px;
-            background: var(--accent);
-            box-shadow: 0 0 10px 2px var(--accent);
-            animation: kittScan 1.5s ease-in-out infinite alternate;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: rgba(127, 127, 127, .07);
+            overflow: hidden;
         }
         @supports (color: color-mix(in srgb, red 50%, blue)) {
-            .kitt-scan {
-                box-shadow:
-                    0 0 10px 2px var(--accent),
-                    0 0 22px 6px color-mix(in srgb, var(--accent) 45%, transparent);
-            }
+            .kitt { background: color-mix(in srgb, var(--muted) 7%, transparent); }
+        }
+        /* La luz es una estela simetrica (gradiente) con una cabeza luminosa. */
+        .kitt-scan {
+            position: absolute; top: 0; bottom: 0; left: 0;
+            width: var(--kitt-w);
+            background: linear-gradient(90deg, transparent, var(--kitt-color) 50%, transparent);
+            animation: kittScan 1.5s ease-in-out infinite alternate;
+        }
+        .kitt-scan::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 2px; height: 8px; margin: -4px 0 0 -1px;
+            border-radius: 1px; background: var(--kitt-color);
+            box-shadow: 0 0 8px 2px var(--kitt-color);
         }
         @keyframes kittScan {
             from { left: 0; }
-            to   { left: calc(100% - var(--scan-w)); }
+            to   { left: calc(100% - var(--kitt-w)); }
         }
         @keyframes kittPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
-        /* Sin puente: línea gris y lenta. Alerta (>4 min): ámbar y palpitando. */
-        .typing.pause .kitt-scan {
-            background: var(--muted); box-shadow: none;
-            animation-duration: 3.5s;
-        }
+        /* Sin puente: gris y lenta. Alerta (>4 min): ámbar y palpitando. */
+        .typing.pause .kitt { --kitt-color: var(--muted); }
+        .typing.pause .kitt-scan { animation-duration: 3.5s; }
+        .typing.pause .kitt-scan::after { box-shadow: none; }
+        .typing.warn .kitt { --kitt-color: var(--warn-text, #fbbf24); }
         .typing.warn .kitt-scan {
-            background: var(--warn-text, #fbbf24);
-            box-shadow: 0 0 10px 3px rgba(210, 153, 34, .5);
             animation: kittScan 1s ease-in-out infinite alternate, kittPulse 1.4s ease-in-out infinite;
         }
         @media (prefers-reduced-motion: reduce) {

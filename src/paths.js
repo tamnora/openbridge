@@ -3,32 +3,44 @@
 /**
  * Casa portable de OpenBridge.
  *
- * Por defecto la casa es el directorio actual (donde corres `openbridge init`).
- * Se puede fijar otra con la variable de entorno OPENBRIDGE_HOME (o el alias
- * OPENCONEX_HOME) o con --dir en la CLI.
+ * La "base" es el directorio que elegis (cwd, --dir o OPENBRIDGE_HOME). Todos
+ * los archivos de OpenBridge viven dentro de `<base>/.openbridge`:
  *
- * Dentro de la casa viven:
  *   config.json   → configuracion del puente (la lee src/bridge/bridge.js)
  *   app.json      → configuracion de la app (password, token, VAPID, puerto)
  *   folders.json  → lista blanca de carpetas
  *   data/         → sesiones, mensajes, catalogos, registro de puentes, push
  *   logs/         → logs del server y del puente
+ *
+ * Si existe un layout viejo (config.json suelto en la base), migrate() lo mueve
+ * automaticamente a `.openbridge/`.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-let overrideHome = null;
+const DIR_NAME = '.openbridge';
 
-function setHome(dir) {
-    overrideHome = dir ? path.resolve(dir) : null;
+let overrideBase = null;
+
+function setBase(dir) {
+    overrideBase = dir ? path.resolve(dir) : null;
 }
+// Alias historico: la CLI y los tests llaman setHome(dir) con la base.
+function setHome(dir) { setBase(dir); }
 
-function home() {
-    if (overrideHome) return overrideHome;
+function baseDir() {
+    if (overrideBase) return overrideBase;
     const env = process.env.OPENBRIDGE_HOME || process.env.OPENCONEX_HOME;
     if (env) return path.resolve(env);
     return process.cwd();
+}
+
+function home() {
+    const base = baseDir();
+    // Evita anidar `.openbridge/.openbridge` si la base ya ES la carpeta de datos.
+    if (path.basename(base) === DIR_NAME) return base;
+    return path.join(base, DIR_NAME);
 }
 
 function p(...parts) {
@@ -58,7 +70,68 @@ function bridgeCatalogFile(id) {
     return p('data', 'catalog-' + id.replace(/[^A-Za-z0-9._-]/g, '') + '.json');
 }
 
+// ---------------------------------------------------------------------------
+// Migracion del layout viejo (archivos sueltos en la base) a `.openbridge/`
+// ---------------------------------------------------------------------------
+const LEGACY_FILES = [
+    'config.json', 'app.json', 'folders.json', 'mode.txt',
+    'sync-state.json', '.procs.json', '.openbridge.pid', '.bridge.pid', 'runtime.json',
+];
+
+function legacyDataDir(dir) {
+    return fs.existsSync(path.join(dir, 'sessions.json'))
+        || fs.existsSync(path.join(dir, 'catalog.json'))
+        || fs.existsSync(path.join(dir, 'bridges.json'));
+}
+function legacyLogsDir(dir) {
+    return fs.existsSync(path.join(dir, 'bridge.log'))
+        || fs.existsSync(path.join(dir, 'server.log'));
+}
+
+function movePath(from, to) {
+    try {
+        fs.renameSync(from, to);
+        return true;
+    } catch (e) {
+        try {
+            fs.cpSync(from, to, { recursive: true });
+            fs.rmSync(from, { recursive: true, force: true });
+            return true;
+        } catch (e2) {
+            return false;
+        }
+    }
+}
+
+// Mueve el layout viejo a `.openbridge/`. Devuelve los nombres migrados (array;
+// vacio si no habia nada que migrar). Solo toca data/ y logs/ si tienen marcas
+// de OpenBridge, para no mover carpetas ajenas del usuario.
+function migrate() {
+    const base = baseDir();
+    const target = home();
+    if (fs.existsSync(target)) return [];
+    if (!fs.existsSync(path.join(base, 'config.json'))) return [];
+
+    const items = [];
+    for (const n of LEGACY_FILES) {
+        if (fs.existsSync(path.join(base, n))) items.push(n);
+    }
+    const dataSrc = path.join(base, 'data');
+    if (fs.existsSync(dataSrc) && legacyDataDir(dataSrc)) items.push('data');
+    const logsSrc = path.join(base, 'logs');
+    if (fs.existsSync(logsSrc) && legacyLogsDir(logsSrc)) items.push('logs');
+    if (!items.length) return [];
+
+    try { fs.mkdirSync(target, { recursive: true }); } catch (e) { return []; }
+    const moved = [];
+    for (const n of items) {
+        if (movePath(path.join(base, n), path.join(target, n))) moved.push(n);
+    }
+    return moved;
+}
+
 function ensureDirs() {
+    migrate();
     for (const d of [home(), dataDir(), logsDir()]) {
         try { fs.mkdirSync(d, { recursive: true }); } catch (e) { /* ya existe */ }
     }
@@ -69,10 +142,11 @@ function exists() {
 }
 
 module.exports = {
-    setHome, home, p,
+    DIR_NAME,
+    setBase, setHome, baseDir, home, p,
     configPath, appConfigPath, foldersPath, modePath, pidPath, bridgeLockPath,
     dataDir, logsDir, serverLogPath, bridgeLogPath,
     syncStatePath, procsStatePath,
     sessionsFile, catalogFile, bridgesFile, pushFile, messagesFile, bridgeCatalogFile,
-    ensureDirs, exists,
+    migrate, ensureDirs, exists,
 };

@@ -35,13 +35,18 @@
   "files": [
     "bin",
     "src",
+    "docs/ARCHITECTURE.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
     "start": "node bin/openbridge.js server",
-    "test": "node --test"
+    "test": "node --test",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "web-push": "^3.6.7"

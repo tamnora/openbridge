@@ -17,10 +17,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// Casa portable: config.json, folders.json, logs y estado viven aca. Por
-// defecto es la carpeta del script (instalacion clasica); la CLI setea
-// OPENBRIDGE_HOME al directorio donde corriste `openbridge init`.
-const HOME = process.env.OPENBRIDGE_HOME || process.env.OPENCONEX_HOME || __dirname;
+// Casa portable: config.json, folders.json, logs y estado viven en
+// `<base>/.openbridge`. La CLI setea OPENBRIDGE_HOME a la base (cwd/--dir); si
+// no hay env, soportamos la instalacion clasica (config al lado del script) o
+// una base deducida del cwd.
+const BASE = process.env.OPENBRIDGE_HOME || process.env.OPENCONEX_HOME || '';
+const HOME = BASE
+    ? path.join(BASE, '.openbridge')
+    : (function () {
+        if (fs.existsSync(path.join(__dirname, 'config.json'))) return __dirname;
+        if (fs.existsSync(path.join(__dirname, '.openbridge', 'config.json'))) return path.join(__dirname, '.openbridge');
+        return path.join(process.cwd(), '.openbridge');
+    })();
 
 const CONFIG_PATH = path.join(HOME, 'config.json');
 const MODE_PATH = path.join(HOME, 'mode.txt');

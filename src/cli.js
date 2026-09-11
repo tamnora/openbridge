@@ -131,20 +131,28 @@ function stopRunningServer() {
     return true;
 }
 
+// Espera a que el hijo detached escriba runtime.json (con todo levantado:
+// server + tunel + puente). Devuelve el runtime o null si el hijo murio/timeout.
+function waitForRuntime(childPid, isDead, timeoutMs) {
+    return new Promise((resolve) => {
+        const start = Date.now();
+        const tick = () => {
+            if (isDead()) return resolve(null);
+            const rt = readRuntime();
+            if (rt && rt.pid && pidAlive(rt.pid) && (!childPid || rt.pid === childPid)) return resolve(rt);
+            if (Date.now() - start > timeoutMs) return resolve(null);
+            setTimeout(tick, 400);
+        };
+        tick();
+    });
+}
+
 async function scanFolders(workspace) {
     const out = [];
-    const skip = new Set();
-    try {
-        if (path.resolve(workspace) === path.resolve(paths.home())) {
-            skip.add('data');
-            skip.add('logs');
-        }
-    } catch (e) { /* nada */ }
     try {
         const items = await fsp.readdir(workspace, { withFileTypes: true });
         for (const it of items) {
             if (it.name.startsWith('.')) continue;
-            if (skip.has(it.name)) continue;
             if (!it.isDirectory()) continue;
             out.push({ name: it.name, path: path.join(workspace, it.name) });
         }
@@ -235,7 +243,9 @@ async function cmdInit(argv) {
     config.writeJsonFile(paths.foldersPath(), { folders });
 
     console.log('');
-    console.log('OpenBridge configurado en ' + home);
+    console.log('OpenBridge configurado.');
+    console.log('  carpeta   : ' + paths.baseDir());
+    console.log('  datos     : ' + home + '  (config, data, logs)');
     console.log('  workspace : ' + workspace);
     console.log('  puente    : ' + id + ' (' + name + ')');
     console.log('  URL local : http://127.0.0.1:' + port + '/chat.php');
@@ -265,20 +275,42 @@ async function cmdServer(argv) {
     const port = parseInt(flags.port || app.port, 10) || 8799;
     const host = app.host || '127.0.0.1';
 
-    // Segundo plano: relanza este mismo comando detached y vuelve enseguida.
-    if (flags.detach && !process.env.OPENBRIDGE_DETACHED) {
+    const isChild = !!process.env.OPENBRIDGE_DETACHED;
+    const foreground = !!flags.stream || isChild;
+
+    // Ya hay un server corriendo: no arrancamos otro.
+    if (!isChild) {
+        const cur = readRuntime();
+        if (cur && pidAlive(cur.pid)) {
+            console.log('OpenBridge ya esta corriendo (pid ' + cur.pid + ').');
+            await printStatus();
+            return 0;
+        }
+    }
+
+    // Por defecto en segundo plano: relanzamos este comando detached (con
+    // --stream para que el hijo corra en primer plano) y esperamos a que
+    // levante todo para mostrar el status.
+    if (!foreground) {
         const bin = process.argv[1];
-        const passthrough = argv.filter((a) => a !== '--detach');
-        const child = spawn(process.execPath, [bin, 'server', '--no-detach', ...passthrough], {
+        const passthrough = argv.filter((a) => a !== '--detach' && a !== '--stream');
+        const child = spawn(process.execPath, [bin, 'server', '--stream', ...passthrough], {
             detached: true,
             stdio: 'ignore',
             windowsHide: true,
-            env: { ...process.env, OPENBRIDGE_HOME: paths.home(), OPENBRIDGE_DETACHED: '1' },
+            env: { ...process.env, OPENBRIDGE_HOME: paths.baseDir(), OPENBRIDGE_DETACHED: '1' },
         });
         child.unref();
-        console.log('OpenBridge arrancado en segundo plano (pid ' + child.pid + ').');
-        console.log('  estado: openbridge status');
-        console.log('  logs  : openbridge logs');
+        let dead = false;
+        child.on('exit', () => { dead = true; });
+        console.log('OpenBridge arrancando en segundo plano (pid ' + child.pid + ')...');
+        const rt = await waitForRuntime(child.pid, () => dead, 120000);
+        console.log('');
+        await printStatus();
+        if (!rt) {
+            console.log('');
+            console.log('No pude confirmar el arranque. Revisa: openbridge logs');
+        }
         return 0;
     }
 
@@ -328,7 +360,7 @@ async function cmdServer(argv) {
     const bridgePath = path.join(__dirname, 'bridge', 'bridge.js');
     const bridge = spawn(process.execPath, [bridgePath], {
         cwd: paths.home(),
-        env: { ...process.env, OPENBRIDGE_HOME: paths.home() },
+        env: { ...process.env, OPENBRIDGE_HOME: paths.baseDir() },
         stdio: 'inherit',
         windowsHide: true,
         detached: process.platform !== 'win32',
@@ -385,12 +417,15 @@ async function cmdStop() {
     return 0;
 }
 
-async function cmdStatus() {
+async function printStatus() {
     const rt = readRuntime();
     if (!rt || !pidAlive(rt.pid)) {
         console.log('OpenBridge: detenido');
-        if (paths.exists()) console.log('casa: ' + paths.home());
-        return 0;
+        if (paths.exists()) {
+            console.log('  carpeta: ' + paths.baseDir());
+            console.log('  datos  : ' + paths.home());
+        }
+        return false;
     }
     console.log('OpenBridge: corriendo (pid ' + rt.pid + ')');
     console.log('  local  : ' + rt.localUrl);
@@ -404,6 +439,11 @@ async function cmdStatus() {
         const sessions = await store.sessionsListFull();
         console.log('  chats  : ' + sessions.length);
     } catch (e) { /* sin datos todavia */ }
+    return true;
+}
+
+async function cmdStatus() {
+    await printStatus();
     return 0;
 }
 
@@ -473,7 +513,7 @@ async function cmdBridge(argv) {
         return 1;
     }
     // Permite apuntar a otro hub sin editar config.json a mano.
-    const env = { ...process.env, OPENBRIDGE_HOME: paths.home() };
+    const env = { ...process.env, OPENBRIDGE_HOME: paths.baseDir() };
     if (flags.api) env.OPENBRIDGE_API_URL = String(flags.api);
     if (flags.token) env.OPENBRIDGE_API_TOKEN = String(flags.token);
     if (flags.id) env.OPENBRIDGE_BRIDGE_ID = String(flags.id);
@@ -613,13 +653,13 @@ async function cmdAutostart(argv) {
         return 0;
     }
     try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (e) { /* nada */ }
-    const home = paths.home();
+    const home = paths.baseDir();
     if (process.platform === 'win32') {
         const ps = [
             '$ws = New-Object -ComObject WScript.Shell;',
             '$sc = $ws.CreateShortcut(' + JSON.stringify(target) + ');',
             '$sc.TargetPath = ' + JSON.stringify(node) + ';',
-            '$sc.Arguments = ' + JSON.stringify('"' + bin + '" server --no-tunnel') + ';',
+            '$sc.Arguments = ' + JSON.stringify('"' + bin + '" server --stream --no-tunnel') + ';',
             '$sc.WorkingDirectory = ' + JSON.stringify(home) + ';',
             '$sc.WindowStyle = 7;',
             '$sc.Save();',
@@ -632,7 +672,7 @@ async function cmdAutostart(argv) {
             + '<plist version="1.0"><dict>'
             + '<key>Label</key><string>net.openbridge.server</string>'
             + '<key>ProgramArguments</key><array>'
-            + '<string>' + node + '</string><string>' + bin + '</string><string>server</string><string>--no-tunnel</string>'
+            + '<string>' + node + '</string><string>' + bin + '</string><string>server</string><string>--stream</string><string>--no-tunnel</string>'
             + '</array>'
             + '<key>WorkingDirectory</key><string>' + home + '</string>'
             + '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>'
@@ -641,7 +681,7 @@ async function cmdAutostart(argv) {
     } else {
         const unit = '[Unit]\nDescription=OpenBridge\nAfter=network-online.target\n\n'
             + '[Service]\nType=simple\n'
-            + 'ExecStart=' + node + ' ' + bin + ' server --no-tunnel\n'
+            + 'ExecStart=' + node + ' ' + bin + ' server --stream --no-tunnel\n'
             + 'WorkingDirectory=' + home + '\nRestart=on-failure\n\n'
             + '[Install]\nWantedBy=default.target\n';
         fs.writeFileSync(target, unit);
@@ -649,7 +689,7 @@ async function cmdAutostart(argv) {
         spawnSync('systemctl', ['--user', 'enable', '--now', 'openbridge.service'], { windowsHide: true });
     }
     console.log('autostart instalado: ' + target);
-    console.log('  (arranca `openbridge server --no-tunnel` en ' + home + ')');
+    console.log('  (arranca `openbridge server --stream --no-tunnel` en ' + home + ')');
     return 0;
 }
 
@@ -699,8 +739,8 @@ function usage() {
     console.log('Uso: openbridge <comando> [opciones]');
     console.log('');
     console.log('  init      Configura la casa (workspace, contrasena, tunel)');
+    console.log('  server    Arranca en segundo plano (muestra el estado al levantar)');
     console.log('  passwd    Cambia la contrasena de acceso (--password <clave>)');
-    console.log('  server    Arranca la app + el puente + el tunel publico');
     console.log('  stop      Detiene el server en segundo plano');
     console.log('  status    Estado del server, puente y chats');
     console.log('  logs      Ultimas lineas de los logs (--follow --server --bridge)');
@@ -712,7 +752,7 @@ function usage() {
     console.log('');
     console.log('Opciones comunes: --dir <ruta>  (casa portable; default: directorio actual)');
     console.log('init: --workspace --name --id --port --password --tunnel --yes --force');
-    console.log('server: --port --no-tunnel --detach');
+    console.log('server: --port --no-tunnel --stream   (sin --stream corre en segundo plano)');
 }
 
 async function main(argv) {
@@ -720,6 +760,13 @@ async function main(argv) {
     const { flags } = parseArgs(args);
     if (flags.dir) paths.setHome(flags.dir);
     const cmd = args[0];
+    const skipMigrate = ['help', '-h', '--help', 'version', '-v', '--version'].includes(cmd);
+    if (!skipMigrate) {
+        const moved = paths.migrate();
+        if (moved && moved.length) {
+            console.log('Migre la configuracion a ' + paths.home() + ' (' + moved.join(', ') + ')');
+        }
+    }
     switch (cmd) {
         case 'init': return cmdInit(args.slice(1));
         case 'passwd': case 'password': return cmdPasswd(args.slice(1));

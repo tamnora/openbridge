@@ -4,49 +4,55 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
-## [No publicado]
+## [0.1.0] - 2026-09-11
+
+Primera version publicada (npm + GitHub).
 
 ### Agregado
 
-- Comandos `import <data-dir>` (trae `data/` de OpenConex), `reset`
-  (`--session <id>`, `--yes`) y `autostart install|remove`.
-- `server --detach` para correr en segundo plano.
-- `logs --follow`, `logs --server` y `logs --bridge`.
+- CLI: `init`, `passwd`, `server`, `stop`, `status`, `logs`, `bridge`, `import`,
+  `reset`, `autostart`, `doctor`, `version`, `help`.
+- Casa portable en `<base>/.openbridge/` (`config.json`, `app.json`,
+  `folders.json`, `data/`, `logs/`), con **migracion automatica** del layout
+  viejo.
+- Store JSON (`src/store/`) con mutex por archivo y escritura atomica.
+- Auth: cookie de sesion firmada, CSRF, remember-me, token del puente (scrypt) y
+  **rate limit / lockout** de login (5 intentos, 15 min).
+- Server web (`src/web/`): router, templates, estaticos, SSE y API completa
+  compatible con `app.js`/`bridge.js`; logs reales a `logs/server.log`.
+- Web Push (`src/push.js`): VAPID + `web-push`.
+- Tuneles enchufables: `tunnelmole`, `ngrok` y `cloudflare`.
+- `openbridge server` en segundo plano (muestra el estado al levantar);
+  `--stream` para primer plano. `--detach` se mantiene como alias.
 - `bridge --api --token --id --name` para apuntar a otro hub sin editar
   `config.json`.
-- Proveedores de tunel `ngrok` y `cloudflare` (ademas de `tunnelmole`).
-- Rate limit / lockout de login (5 intentos, 15 min).
+- `import <data-dir>` (trae `data/` de OpenConex), `reset`
+  (`--session <id>` / `--yes`) y `autostart install|remove` (Windows/Linux/macOS).
+- `logs --follow`, `logs --server` y `logs --bridge`.
+- Consumo de **tokens y capacidad de contexto** por sesion (sidebar, encabezado,
+  statusbar y franja de trabajo); el puente sincroniza `models_ctx` desde
+  `opencode models --verbose`.
+- Indicador KITT con bordes y estela luminosa.
 - Guard de Node < 18 con mensaje amigable.
-- `src/log.js` ahora escribe `logs/server.log` de verdad.
-- Tests de auth, API y `safeJoinWorkspace`; CI en Windows/Linux/macOS.
-- `docs/ARCHITECTURE.md`, `CHANGELOG.md` y `AGENTS.md`.
-- Consumo de tokens y **capacidad de contexto** por sesion (el puente sincroniza
-  `models_ctx` desde `opencode models --verbose`; el sidebar y el encabezado
-  muestran `consumidos/capacidad`).
-- Comando `passwd` (alias `password`) para cambiar la contrasena sin reconfigurar todo.
+- Tests con `node --test` (store, auth, API, `safeJoinWorkspace`, migracion) y
+  CI en Windows/Linux/macOS.
+- `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `AGENTS.md`, README y LICENSE.
 
 ### Cambiado
 
 - **Login solo con contrasena**: se quito el campo de usuario (es un unico
-  `admin`); la pagina pide unicamente la contrasena.
-- `init --force` y `passwd` **detienen un server en ejecucion** antes de
-  reescribir la config, para no dejar un proceso con la contrasena vieja en
-  memoria (causa de "Contrasena incorrecta" tras reconfigurar).
-- `init`: contrasena oculta al escribir, resumen con credenciales/URL, y
-  validacion del proveedor de tunel. El escaneo de carpetas excluye `data/` y
-  `logs/` cuando el workspace es la propia casa.
+  `admin`).
+- `init --force` y `passwd` detienen un server en ejecucion antes de reescribir
+  la config, para no dejar la contrasena vieja en memoria.
+- `init`: contrasena oculta al escribir, resumen con credenciales/URL, validacion
+  del proveedor de tunel y exclusion de `.openbridge/` en el escaneo.
 - `status`: muestra puente en linea y cantidad de chats.
-- `stop`: mata el arbol completo de procesos (hijos detached en POSIX).
+- `stop`: mata el arbol completo de procesos (Windows `taskkill /T`; POSIX grupo
+  detached).
 - Mensaje claro cuando el puerto esta ocupado.
-- `package.json` con `author`, `repository`, `homepage`, `bugs`, `keywords`.
 
 ### Corregido
 
 - El servidor ya no falla en silencio: los errores y los 4xx/5xx van a
   `logs/server.log`.
-
-## [0.1.0]
-
-- Version inicial: CLI (`init`, `server`, `stop`, `status`, `logs`, `bridge`,
-  `doctor`), casa portable, store JSON, auth, API, SSE, Web Push y tunel
-  TunnelMole.
+- Evita anidar `.openbridge/.openbridge` y valida la instancia ya corriendo.

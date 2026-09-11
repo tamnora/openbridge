@@ -2,6 +2,8 @@
 node_modules/
 
 # Casa portable: configuracion y datos locales (por instalacion)
+.openbridge/
+# Layout viejo (pre `.openbridge/`); se migra solo, pero no se commitea.
 config.json
 app.json
 folders.json
