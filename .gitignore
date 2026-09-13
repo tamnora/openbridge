@@ -23,3 +23,6 @@ logs/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Artefactos temporales de Playwright MCP
+.playwright-mcp/

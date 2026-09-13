@@ -69,6 +69,7 @@
             z-index: 30;
         }
         #sidebar .brand {
+            min-height: 54px;
             padding: 12px 14px 10px;
             display: flex;
             align-items: center;
@@ -495,8 +496,9 @@
         .projsec .pshead .pscount { font-size: 11px; color: var(--muted); flex-shrink: 0; }
         .projsec .pbody { display: none; }
         .projsec.open .pbody { display: block; }
+        .histrow { display: flex; gap: 6px; margin-top: 6px; }
         .histbtn {
-            width: 100%; margin-top: 6px; padding: 8px; border: 1px dashed var(--border); border-radius: 8px;
+            flex: 1; min-width: 0; padding: 8px; border: 1px dashed var(--border); border-radius: 8px;
             background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
         }
         .histbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
@@ -598,6 +600,8 @@
         .msg.mine .who { color: var(--mine); }
         .msg.theirs { border-left-color: var(--accent); }
         .msg.theirs .who { color: var(--accent); }
+        .msg.theirs.plan { border-left-color: var(--warn-text, #d29922); }
+        .msg.theirs.plan .who { color: var(--warn-text, #d29922); }
         .msg.error { border-left-color: var(--danger); }
         /* Aire extra en el cambio de turno: lo tuyo ↔ lo que responde el agente */
         .msg.mine + .msg.theirs,

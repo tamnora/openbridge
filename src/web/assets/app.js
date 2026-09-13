@@ -220,7 +220,10 @@ function updateStatusbar() {
     if (state.currentId !== null && state.currentSession) {
         extra = '· ' + extra;
         var tokTxt = sessionTokensLabel(state.currentSession);
-        if (tokTxt) extra += ' · ' + tokTxt + ' tok';
+        if (tokTxt) {
+            var pct = sessionTokensPct(state.currentSession);
+            extra += ' · ' + tokTxt + ' tokens' + (pct ? ' (' + pct + ')' : '');
+        }
     }
     els.sbExtra.textContent = extra;
 }
@@ -782,6 +785,14 @@ function sessionTokensTitle(s) {
     return tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '');
 }
 
+// Porcentaje de contexto consumido ('' si no hay datos).
+function sessionTokensPct(s) {
+    var tok = Math.round(Number(s.tokens) || 0);
+    var ctx = modelContext(s.model);
+    if (!tok || !ctx) return '';
+    return Math.min(100, Math.round((tok / ctx) * 100)) + '%';
+}
+
 // Etiqueta "consumidos / capacidad" de la sesion.
 function sessionTokensHtml(s) {
     var label = sessionTokensLabel(s);
@@ -793,7 +804,10 @@ function sessionTokensHtml(s) {
 function sessionSubtitle(s) {
     var txt = projectLabel(s.folder) + ' · ' + (s.model || 'sin modelo') + ' · ' + (s.agent || 'build');
     var label = sessionTokensLabel(s);
-    if (label) txt += ' · ' + label + ' tok';
+    if (label) {
+        var pct = sessionTokensPct(s);
+        txt += ' · ' + label + ' tokens' + (pct ? ' (' + pct + ')' : '');
+    }
     return txt;
 }
 
@@ -1216,9 +1230,12 @@ function renderHome(sessions) {
                     + '</div>';
             }
             html += '</div>';
-            html += '<button type="button" class="histbtn" data-folder="' + esc(key) + '">'
+            html += '<div class="histrow">'
+                + '<button type="button" class="histbtn" data-folder="' + esc(key) + '">'
                 + (hidden > 0 ? 'ver historial · ' + hidden + ' más' : 'ver historial')
-                + '</button>';
+                + '</button>'
+                + '<button type="button" class="histbtn filesbtn" data-folder="' + esc(key) + '" title="Archivos del proyecto">ver archivos</button>'
+                + '</div>';
             html += '</div></div>';
         }
     }
@@ -1594,7 +1611,8 @@ function msgSig(m) {
 function msgNodeHtml(m, chatQuery) {
     var cls = m.role === 'user' ? 'mine' : 'theirs';
     if (m.status === 'canceled') cls += ' canceled';
-    var who = m.role === 'user' ? '❯ vos' : '● agent';
+    var who = m.role === 'user' ? '❯ vos' : '● Agente';
+    if (m.agent === 'plan') cls += ' plan';
     var agentBadge = m.agent ? ' <span class="abadge ' + esc(m.agent) + '">' + esc(m.agent) + '</span>' : '';
     var stopBadge = m.canceled ? ' <span class="stopbadge">⏹ detenido</span>' : '';
     var streaming = m.role === 'assistant' && m.status === 'streaming';
@@ -1853,6 +1871,19 @@ function focusProject(folder) {
         showView('home');
         loadSessions();
     }
+}
+
+// Convierte la carpeta absoluta de un proyecto en ruta relativa al workspace
+// (para la vista de archivos). '' si no se puede derivar (usa la raiz).
+function folderToFilesPath(folder) {
+    var ws = state.catalog && state.catalog.workspace ? state.catalog.workspace : '';
+    if (!folder || !ws) return '';
+    var norm = function (p) { return String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); };
+    var nws = norm(ws), nf = norm(folder);
+    if (nf === nws || nf.indexOf(nws + '/') !== 0) return '';
+    var raw = String(folder).replace(/\\/g, '/').replace(/\/+$/, '');
+    var rawWs = String(ws).replace(/\\/g, '/').replace(/\/+$/, '');
+    return raw.slice(rawWs.length + 1);
 }
 
 // Historial de un proyecto: vista aparte con buscador dentro del proyecto.
@@ -2644,9 +2675,17 @@ els.home.addEventListener('click', function (e) {
         return;
     }
     var hist = e.target.closest('.histbtn');
-    if (hist) {
+    if (hist && !e.target.closest('.filesbtn')) {
         e.stopPropagation();
         openHistory(hist.getAttribute('data-folder'));
+        return;
+    }
+    var fbtn = e.target.closest('.filesbtn');
+    if (fbtn) {
+        e.stopPropagation();
+        state.filesPath = folderToFilesPath(fbtn.getAttribute('data-folder'));
+        delete state.filesCache[state.filesPath];
+        showView('files');
     }
 });
 

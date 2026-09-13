@@ -2194,6 +2194,14 @@ async function tick(opts) {
             } catch (e) {
                 log('error al publicar la respuesta #' + m.id + ': ' + e.message);
             }
+            // Refresca tokens/costo enseguida: el barrido solo corre cada 15 min.
+            if (r.opencodeSession && m._t) {
+                try {
+                    await refreshTokens(path.resolve(m.session.folder || ''), { id: r.opencodeSession }, m._t);
+                } catch (e) {
+                    log('aviso: no pude refrescar tokens de ' + r.opencodeSession + ': ' + e.message);
+                }
+            }
         }
         for (const f of folders) {
             await handleFolderRequest(f);
