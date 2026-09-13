@@ -244,7 +244,7 @@ async function cmdInit(argv) {
         csrfSecret,
         bridgeToken,
         vapid,
-        tunnel: { provider, domain: '' },
+        tunnel: { provider, domain: flags.domain ? String(flags.domain) : '' },
     };
     config.writeBridge(bridgeCfg);
     config.writeApp(appCfg);
@@ -485,6 +485,51 @@ async function cmdQr() {
     console.log('URL local (el server no esta corriendo): ' + url);
     console.log('');
     if (!printQr(url)) { console.log('URL demasiado larga para el QR.'); return 1; }
+    return 0;
+}
+
+// Muestra o cambia el proveedor de tunel (y su dominio fijo) sin reconfigurar
+// todo. Cambiar el proveedor requiere reiniciar el server.
+async function cmdTunnel(argv) {
+    const { flags, _ } = parseArgs(argv);
+    if (!paths.exists()) {
+        console.error('No hay configuracion. Corre primero: openbridge init');
+        return 1;
+    }
+    const app = config.readApp();
+    const cur = app.tunnel || { provider: 'tunnelmole', domain: '' };
+    const arg = String(_[0] || '').toLowerCase();
+
+    if (arg === '' || arg === 'status' || arg === 'show') {
+        const rt = readRuntime();
+        const running = rt && pidAlive(rt.pid);
+        console.log('proveedor : ' + (cur.provider || 'tunnelmole'));
+        console.log('dominio   : ' + (cur.domain || '(aleatorio)'));
+        console.log('estado    : ' + (running ? 'corriendo' : 'detenido'));
+        if (running && rt.publicUrl) console.log('publico   : ' + rt.publicUrl);
+        return 0;
+    }
+
+    let provider = arg;
+    if (provider === 'cloudflared') provider = 'cloudflare';
+    if (!['tunnelmole', 'ngrok', 'cloudflare', 'none'].includes(provider)) {
+        console.error('Proveedor desconocido: ' + arg + ' (usar tunnelmole|ngrok|cloudflare|none)');
+        return 1;
+    }
+    const domain = flags.domain !== undefined ? String(flags.domain).trim() : String(cur.domain || '');
+    app.tunnel = { provider, domain };
+    config.writeApp(app);
+    console.log('Tunel configurado: ' + provider + (domain ? '  (dominio ' + domain + ')' : ''));
+    if (provider === 'ngrok' && !domain) {
+        console.log('aviso: ngrok sin dominio fijo da URL aleatoria; pasá --domain <sub.ngrok.app> para una estable.');
+    }
+    if (provider === 'cloudflare' && domain) {
+        console.log('aviso: el quick tunnel de cloudflared ignora el dominio (URL aleatoria).');
+    }
+    const rt = readRuntime();
+    if (rt && pidAlive(rt.pid)) {
+        console.log('Hay un server corriendo: reinicialo para aplicar (openbridge stop && openbridge server).');
+    }
     return 0;
 }
 
@@ -785,6 +830,7 @@ function usage() {
     console.log('  stop      Detiene el server en segundo plano');
     console.log('  status    Estado del server, puente y chats');
     console.log('  qr        Muestra la URL (publica o local) como QR para el celular');
+    console.log('  tunnel    Muestra o cambia el proveedor de tunel (tunnelmole|ngrok|cloudflare|none) [--domain]');
     console.log('  logs      Ultimas lineas de los logs (--follow --server --bridge)');
     console.log('  bridge    Corre solo el puente (--api --token --id --name)');
     console.log('  import    Trae data/ de OpenConex (<data-dir> [--force])');
@@ -793,7 +839,7 @@ function usage() {
     console.log('  doctor    Verifica Node, opencode, configuracion y puerto');
     console.log('');
     console.log('Opciones comunes: --dir <ruta>  (casa portable; default: directorio actual)');
-    console.log('init: --workspace --name --id --port --password --tunnel --yes --force');
+    console.log('init: --workspace --name --id --port --password --tunnel --domain --yes --force');
     console.log('server: --port --no-tunnel --stream   (sin --stream corre en segundo plano)');
 }
 
@@ -816,6 +862,7 @@ async function main(argv) {
         case 'stop': return cmdStop();
         case 'status': return cmdStatus();
         case 'qr': return cmdQr();
+        case 'tunnel': return cmdTunnel(args.slice(1));
         case 'logs': return cmdLogs(args.slice(1));
         case 'bridge': return cmdBridge(args.slice(1));
         case 'import': return cmdImport(args.slice(1));

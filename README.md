@@ -57,6 +57,7 @@ primer plano usá `openbridge server --stream`; para detenerlo, `openbridge stop
 --port 8799          puerto local
 --password <clave>   contraseña de acceso
 --tunnel <prov>      tunnelmole | ngrok | cloudflare | none
+--domain <host>      dominio fijo del túnel (ngrok)
 --yes                sin preguntas (usa defaults)
 --force              reconfigura aunque ya exista
 --dir <ruta>         casa portable (default: directorio actual)
@@ -72,6 +73,7 @@ primer plano usá `openbridge server --stream`; para detenerlo, `openbridge stop
 | `openbridge stop` | Detiene el server y su árbol de procesos |
 | `openbridge status` | Estado, URL, puente en línea y chats |
 | `openbridge qr` | Muestra la URL (pública o local) como QR para escanear desde el celular |
+| `openbridge tunnel` | Muestra o cambia el proveedor de túnel y su dominio fijo (`--domain`) |
 | `openbridge logs` | Logs (`--follow`, `--server`, `--bridge`) |
 | `openbridge bridge` | Corre **solo** el puente (`--api --token --id --name`) |
 | `openbridge import` | Trae `data/` de OpenConex (`<data-dir> [--force]`) |

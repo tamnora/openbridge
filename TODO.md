@@ -56,7 +56,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   - [x] **Cloudflare** quick tunnel (`cloudflared`; falta dominio propio/named tunnel).
   - [ ] TunnelMole con subdominio pago, o autoalbergar `tunnelmole-service`.
 - [x] Proveedores de túnel enchufables: `tunnelmole`, `ngrok`, `cloudflare`.
-- [ ] `openbridge tunnel` (estado/cambio de proveedor) y guardar el dominio en `app.json`.
+- [x] `openbridge tunnel` (estado/cambio de proveedor) y guardar el dominio en `app.json`; `init --domain`.
 - [ ] Re-suscripción push automática cuando cambia la URL.
 - [ ] `trust proxy` explícito (hoy `isSecure` mira `X-Forwarded-Proto` directo).
 
