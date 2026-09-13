@@ -24,5 +24,8 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Credenciales locales (nunca commitear)
+.npmrc
+
 # Artefactos temporales de Playwright MCP
 .playwright-mcp/

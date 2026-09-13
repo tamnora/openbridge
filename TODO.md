@@ -99,6 +99,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Publicar en **npm** como `@danieltmn/openbridge` (`openbridge` a secas está bloqueado por similitud con `open-bridge`).
 - [x] Crear repo en **GitHub** (`tamnora/openbridge`) y pushear.
 - [x] `openbridge version`.
+- [x] Proceso de **release privado** (`scripts/release.mjs`): bump semver/prerelease,
+      changelog, commit, tag, push a GitHub y publish con dist-tag; guard de dueno.
 - [x] CI (GitHub Actions): `npm test` en Windows/Linux/macOS.
 - [x] `CHANGELOG.md` (falta guía de contribución).
 

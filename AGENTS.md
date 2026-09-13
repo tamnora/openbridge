@@ -10,7 +10,8 @@ Guia para agentes que trabajen en este repo.
   `node bin/openbridge.js server --no-tunnel` (segundo plano; `--stream` para
   primer plano). Detener: `node bin/openbridge.js stop --dir <casa>`
 - Estado/logs: `node bin/openbridge.js status` / `logs --follow`
-- Publicar: `npm publish` (previa `npm login`); GitHub: `gh repo create`.
+- Release (solo el dueno): `npm run release -- <patch|minor|major|prerelease|X.Y.Z>`
+  (ver mas abajo).
 
 No hay linter todavia. Antes de cerrar un cambio, corre `npm test` y
 `node --check` sobre los archivos JS tocados.
@@ -41,3 +42,24 @@ No hay linter todavia. Antes de cerrar un cambio, corre `npm test` y
   `data/`, `logs/`); estan en `.gitignore`.
 - Mantener `TODO.md` y `CHANGELOG.md` al dia cuando cierres un pendiente.
 - No hacer commit ni push salvo que el usuario lo pida.
+
+## Release (privado)
+
+El proceso vive en `scripts/release.mjs` (no se incluye en el paquete npm). Solo
+el dueno puede correrlo: el guard exige `npm whoami` = `danieltmn`, remoto
+`origin` = `tamnora/openbridge` y (si hay `gh`) la cuenta `tamnora`. Sin esas
+credenciales aborta.
+
+- `npm run release -- patch|minor|major`: version estable, publica con dist-tag
+  `latest`.
+- `npm run release -- prerelease`: genera `X.Y.Z-beta.N` y publica con tag
+  `beta` (no pisa `latest`). `--preid next` cambia el identificador.
+- `npm run release:dry -- minor`: muestra el plan sin escribir ni publicar.
+- Version explicita: `npm run release -- 0.3.0`.
+- Opciones: `--notes "..."`, `--tag <name>`, `--skip-tests`, `--no-push`,
+  `--yes`.
+
+Actualiza `package.json` y `CHANGELOG.md`, commitea `chore(release): vX.Y.Z`,
+taggea `vX.Y.Z`, hace push a GitHub y publica en npm. Para promover un
+prerelease a produccion:
+`npm dist-tag add @danieltmn/openbridge@X.Y.Z latest`.
