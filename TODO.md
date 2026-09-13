@@ -89,6 +89,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Advertir en la consola que el túnel es **público mientras corre**.
 - [x] Revisar cookies (`HttpOnly`, `SameSite`, `Secure` detrás del túnel).
 - [x] Bind solo a `127.0.0.1` (default) y no exponer LAN.
+- [x] Cabeceras de seguridad (`CSP`, `nosniff`, `X-Frame-Options`, `Referrer-Policy`) y `Secure` solo desde loopback.
 - [x] Test de `safeJoinWorkspace` (traversal, límite de profundidad).
 
 ## 7. Pruebas / calidad

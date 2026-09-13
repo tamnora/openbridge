@@ -70,6 +70,13 @@ function securityHeaders(res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
+    // La app usa scripts/estilos inline (templates) y data: para imagenes
+    // adjuntas. Igual bloquea origenes externos, frames y objetos.
+    res.setHeader('Content-Security-Policy',
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        + "script-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self'; "
+        + "manifest-src 'self'; object-src 'none'; base-uri 'none'; "
+        + "frame-ancestors 'none'; form-action 'self'");
 }
 
 async function handle(app, req, res) {
