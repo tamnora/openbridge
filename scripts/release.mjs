@@ -136,7 +136,7 @@ function insertChangelog(version, notes) {
     writeFileSync(changelogPath, renderChangelog(cl, version, notes));
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
     const o = {
         bump: null, preid: 'beta', tag: null, notes: null,
         dryRun: false, yes: false, skipTests: false, noPush: false, help: false
@@ -155,6 +155,13 @@ function parseArgs(argv) {
         else if (!o.bump) o.bump = a;
         else fail('sobra un argumento: ' + a);
     }
+    // `npm run release -- ...` se queda con flags que tambien son de npm
+    // (--yes, --tag, --dry-run, --preid). Los recuperamos del entorno.
+    const envTrue = (n) => ['true', '1', ''].includes(process.env['npm_config_' + n]);
+    if (!o.yes && envTrue('yes')) o.yes = true;
+    if (!o.dryRun && envTrue('dry_run')) o.dryRun = true;
+    if (!o.tag && process.env.npm_config_tag) o.tag = process.env.npm_config_tag;
+    if (o.preid === 'beta' && process.env.npm_config_preid) o.preid = process.env.npm_config_preid;
     return o;
 }
 
