@@ -28,6 +28,8 @@ var els = {
     sendBtn: document.getElementById('sendBtn'),
     btnImg: document.getElementById('btnImg'),
     btnMic: document.getElementById('btnMic'),
+    btnTpl: document.getElementById('btnTpl'),
+    tplPanel: document.getElementById('tplPanel'),
     imgInput: document.getElementById('imgInput'),
     imgPreview: document.getElementById('imgPreview'),
     imgThumb: document.getElementById('imgThumb'),
@@ -1106,6 +1108,7 @@ function composeOpenSheet() {
 function composeCloseSheet() {
     if (!els.sendForm) return;
     voiceStop();
+    tplClose();
     els.sendForm.classList.remove('open');
     document.body.classList.remove('compose-open');
     if (els.imgPreview && els.imgPreview.parentNode === els.sendForm && els.composeOpen) {
@@ -2494,6 +2497,85 @@ if (els.btnMic) {
 }
 
 // ---------------------------------------------------------------------------
+// Plantillas de prompts (atajos guardados en el navegador).
+// ---------------------------------------------------------------------------
+var TPL_KEY = 'ob_tpl';
+
+function tplLoad() {
+    try {
+        var a = JSON.parse(localStorage.getItem(TPL_KEY) || '[]');
+        if (!Array.isArray(a)) return [];
+        return a.filter(function (x) { return typeof x === 'string' && x.trim() !== ''; }).slice(0, 30);
+    } catch (e) { return []; }
+}
+function tplStore(list) {
+    try { localStorage.setItem(TPL_KEY, JSON.stringify(list)); } catch (e) {}
+}
+function tplClose() {
+    if (els.tplPanel) els.tplPanel.style.display = 'none';
+}
+function tplRender() {
+    var list = tplLoad();
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+        html += '<div class="tpl-row" data-tpl="' + i + '"><span class="tpl-text">' + esc(list[i]) + '</span>'
+            + '<button type="button" class="tpl-del" data-del="' + i + '" title="Borrar plantilla" aria-label="Borrar plantilla">✕</button></div>';
+    }
+    if (!list.length) html += '<div class="tpl-empty">No hay plantillas. Escribí un prompt y tocá “guardar lo escrito”.</div>';
+    html += '<button type="button" class="tpl-save" id="tplSave">＋ guardar lo escrito</button>';
+    els.tplPanel.innerHTML = html;
+}
+function tplOpen() {
+    closeSlash();
+    tplRender();
+    els.tplPanel.style.display = 'block';
+}
+function tplInsert(text) {
+    var cur = els.input.value;
+    els.input.value = cur && cur.trim() !== '' ? (cur.replace(/\s+$/, '') + ' ' + text) : text;
+    tplClose();
+    autoGrow();
+    els.input.focus();
+    try { els.input.setSelectionRange(els.input.value.length, els.input.value.length); } catch (e) {}
+}
+function tplSaveCurrent() {
+    var text = els.input.value.trim();
+    if (!text) { toast('escribí un prompt primero', 'error'); return; }
+    var list = tplLoad();
+    if (list.indexOf(text) >= 0) { toast('esa plantilla ya existe', 'ok'); return; }
+    list.unshift(text);
+    tplStore(list.slice(0, 30));
+    toast('plantilla guardada', 'ok');
+    tplRender();
+}
+
+if (els.btnTpl && els.tplPanel) {
+    els.btnTpl.addEventListener('click', function () {
+        if (state.currentId === null) return;
+        if (els.tplPanel.style.display === 'block') tplClose();
+        else tplOpen();
+    });
+    els.tplPanel.addEventListener('click', function (e) {
+        var del = e.target.closest('.tpl-del');
+        if (del) {
+            e.stopPropagation();
+            var list = tplLoad();
+            list.splice(parseInt(del.getAttribute('data-del'), 10), 1);
+            tplStore(list);
+            tplRender();
+            return;
+        }
+        if (e.target.closest('.tpl-save')) { tplSaveCurrent(); return; }
+        var row = e.target.closest('.tpl-row');
+        if (row) {
+            var list2 = tplLoad();
+            var t = list2[parseInt(row.getAttribute('data-tpl'), 10)];
+            if (typeof t === 'string') tplInsert(t);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Composer: textarea multilínea (Enter envía, Shift+Enter salta de línea)
 // y menú de comandos "/" con filtro, flechas y Enter.
 // ---------------------------------------------------------------------------
@@ -2540,6 +2622,7 @@ els.input.addEventListener('input', function () {
     autoGrow();
     var v = els.input.value;
     if (state.view === 'chat' && v.charAt(0) === '/') {
+        tplClose();
         slash.items = slashFilter(v);
         slash.sel = 0;
         renderSlash();
@@ -2572,7 +2655,8 @@ els.input.addEventListener('keydown', function (e) {
         }
         if (e.key === 'Escape') {
             e.stopPropagation();
-            closeSlash();
+            if (els.tplPanel && els.tplPanel.style.display === 'block') tplClose();
+            else closeSlash();
             return;
         }
     }
@@ -2610,6 +2694,7 @@ els.sendForm.addEventListener('submit', async function (ev) {
             els.input.value = '';
             autoGrow();
             closeSlash();
+            tplClose();
             setPendingImage(null);
             await loadHistory(state.currentId, true);
         } else {
@@ -2965,7 +3050,11 @@ async function loadChanges(folder) {
             + '<span class="chg-path">' + esc(files[i].path) + '</span></div>';
     }
     list += '</div>';
-    els.viewChanges.innerHTML = changesHead(folder, status.branch) + list + '<div class="placeholder">cargando diff…</div>';
+    var tracked = files.some(function (f) { return f.status !== '??'; });
+    var toolbar = tracked
+        ? '<div class="files-toolbar"><button type="button" class="linkbtn" id="chgRevert">↩ revertir cambios rastreados</button></div>'
+        : '';
+    els.viewChanges.innerHTML = changesHead(folder, status.branch) + toolbar + list + '<div class="placeholder">cargando diff…</div>';
 
     var diff = await ocCommand('git_diff', [folder], 20, 700);
     var diffHtml;
@@ -2975,7 +3064,25 @@ async function loadChanges(folder) {
     } else {
         diffHtml = '<div class="placeholder">' + esc(diff.error || 'no se pudo obtener el diff') + '</div>';
     }
-    els.viewChanges.innerHTML = changesHead(folder, status.branch) + list + diffHtml;
+    els.viewChanges.innerHTML = changesHead(folder, status.branch) + toolbar + list + diffHtml;
+}
+
+// Revertir cambios rastreados (con confirmacion): borra las modificaciones que
+// el agente u otros hicieron en archivos ya versionados. No toca los nuevos.
+if (els.viewChanges) {
+    els.viewChanges.addEventListener('click', function (e) {
+        var btn = e.target.closest('#chgRevert');
+        if (!btn) return;
+        var folder = changesFolder();
+        if (!folder) return;
+        if (!window.confirm('¿Revertir TODOS los cambios de archivos rastreados en “' + projectLabel(folder) + '”?\n\nNo se puede deshacer. Los archivos nuevos sin seguimiento no se tocan.')) return;
+        btn.disabled = true;
+        btn.textContent = 'revirtiendo…';
+        ocCommand('git_checkout', [folder], 15, 500).then(function (r) {
+            toast(r.ok ? 'cambios revertidos' : (r.error || 'no se pudo revertir'), r.ok ? 'ok' : 'error');
+            renderChangesView();
+        });
+    });
 }
 
 function renderFilesView() {

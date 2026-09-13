@@ -1593,6 +1593,12 @@ async function handleGitCommand(cmd) {
             const r = gitIn(folder, ['status', '--porcelain=v1', '-b', '--untracked-files=all']);
             if (r.code !== 0) throw new Error(r.err || 'no es un repositorio git');
             await api('command_done', { id: cmd.id, ok: true, text: JSON.stringify(parseGitStatus(r.text)), error: '' }, cmd._t);
+        } else if (cmd.name === 'git_checkout') {
+            // Revierte los cambios de archivos RASTREADOS dentro de la carpeta
+            // de la sesion (`.` es relativo a esa carpeta). No toca nuevos.
+            const r = gitIn(folder, ['checkout', '--', '.']);
+            if (r.code !== 0) throw new Error(r.err || 'no se pudo revertir');
+            await api('command_done', { id: cmd.id, ok: true, text: JSON.stringify({ reverted: true }), error: '' }, cmd._t);
         } else {
             // diff HEAD: cambios preparados + sin preparar. `fs_result` admite
             // respuestas mas grandes que command_done (8000 car.).
@@ -2102,8 +2108,8 @@ async function handleCommand(cmd) {
         await handleFsCommand(cmd);
         return;
     }
-    // Cambios git del proyecto (status/diff).
-    if (cmd.name === 'git_status' || cmd.name === 'git_diff') {
+    // Cambios git del proyecto (status/diff/revertir).
+    if (cmd.name === 'git_status' || cmd.name === 'git_diff' || cmd.name === 'git_checkout') {
         await handleGitCommand(cmd);
         return;
     }
