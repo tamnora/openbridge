@@ -782,6 +782,14 @@
         }
         form.sendbar .imgbtn:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
         form.sendbar .imgbtn svg { flex-shrink: 0; display: block; }
+        form.sendbar .imgbtn.listening {
+            color: var(--danger); border-color: var(--danger); background: transparent;
+            animation: micpulse 1.1s ease-in-out infinite;
+        }
+        @keyframes micpulse {
+            0%, 100% { box-shadow: 0 0 0 0 transparent; }
+            50% { box-shadow: 0 0 0 4px var(--accent-soft); }
+        }
         /* ----- Botón que abre la hoja de escritura (móvil) ----- */
         .composeopen {
             display: none; align-items: center; gap: 10px; width: 100%;
@@ -1213,6 +1221,7 @@
                 <span class="prompt">❯</span>
                 <textarea id="input" rows="1" placeholder="escribí un mensaje…" autocomplete="off"></textarea>
                 <button type="button" class="imgbtn" id="btnImg" title="Adjuntar imagen (modelos con visión)" aria-label="Adjuntar imagen"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg></button>
+                <button type="button" class="imgbtn" id="btnMic" title="Dictar por voz" aria-label="Dictar por voz"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z"/></svg></button>
                 <input type="file" id="imgInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
                 <button type="submit" id="sendBtn">enviar</button>
                 <div id="slashPanel" class="slash-panel"></div>

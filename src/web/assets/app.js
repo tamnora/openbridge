@@ -27,6 +27,7 @@ var els = {
     input: document.getElementById('input'),
     sendBtn: document.getElementById('sendBtn'),
     btnImg: document.getElementById('btnImg'),
+    btnMic: document.getElementById('btnMic'),
     imgInput: document.getElementById('imgInput'),
     imgPreview: document.getElementById('imgPreview'),
     imgThumb: document.getElementById('imgThumb'),
@@ -1071,6 +1072,7 @@ function composeOpenSheet() {
 }
 function composeCloseSheet() {
     if (!els.sendForm) return;
+    voiceStop();
     els.sendForm.classList.remove('open');
     document.body.classList.remove('compose-open');
     if (els.imgPreview && els.imgPreview.parentNode === els.sendForm && els.composeOpen) {
@@ -2396,6 +2398,69 @@ if (els.btnImg) {
 }
 
 // ---------------------------------------------------------------------------
+// Dictado por voz (Web Speech API nativa del navegador; sin dependencias).
+// ---------------------------------------------------------------------------
+var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+var voice = { rec: null, listening: false, base: '' };
+
+function voiceSetListening(on) {
+    voice.listening = on;
+    if (!els.btnMic) return;
+    els.btnMic.classList.toggle('listening', on);
+    els.btnMic.title = on ? 'Detener dictado' : 'Dictar por voz';
+    els.btnMic.setAttribute('aria-label', on ? 'Detener dictado' : 'Dictar por voz');
+}
+
+function voiceStop() {
+    if (voice.rec && voice.listening) {
+        try { voice.rec.stop(); } catch (e) {}
+    }
+    voiceSetListening(false);
+}
+
+function voiceStart() {
+    if (!voice.rec || state.currentId === null) return;
+    voice.base = els.input.value ? els.input.value.replace(/\s+$/, ' ') : '';
+    try { voice.rec.start(); } catch (e) { /* ya estaba iniciado */ }
+    voiceSetListening(true);
+    toast('dictado activo · hablá ahora', 'ok');
+}
+
+if (els.btnMic) {
+    if (!SpeechRec) {
+        els.btnMic.style.display = 'none';
+    } else {
+        voice.rec = new SpeechRec();
+        voice.rec.lang = navigator.language || 'es-AR';
+        voice.rec.continuous = true;
+        voice.rec.interimResults = true;
+        voice.rec.onresult = function (ev) {
+            var fin = '', interim = '';
+            for (var i = ev.resultIndex; i < ev.results.length; i++) {
+                var r = ev.results[i];
+                if (r.isFinal) fin += r[0].transcript;
+                else interim += r[0].transcript;
+            }
+            if (fin) voice.base = (voice.base + fin).replace(/\s+/g, ' ');
+            var tail = interim ? (voice.base ? ' ' : '') + interim : '';
+            els.input.value = (voice.base + tail).replace(/^\s+/, '');
+            autoGrow();
+        };
+        voice.rec.onerror = function (ev) {
+            voiceSetListening(false);
+            var m = (ev && ev.error) || '';
+            if (m === 'not-allowed' || m === 'service-not-allowed') toast('permiso de micrófono denegado', 'error');
+            else if (m !== 'aborted' && m !== 'no-speech') toast('dictado: ' + m, 'error');
+        };
+        voice.rec.onend = function () { voiceSetListening(false); };
+        els.btnMic.addEventListener('click', function () {
+            if (voice.listening) voiceStop();
+            else voiceStart();
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Composer: textarea multilínea (Enter envía, Shift+Enter salta de línea)
 // y menú de comandos "/" con filtro, flechas y Enter.
 // ---------------------------------------------------------------------------
@@ -2503,6 +2568,7 @@ els.sendForm.addEventListener('submit', async function (ev) {
     var text = els.input.value.trim();
     if ((!text && !state.pendingImage) || state.isSending) return;
     state.isSending = true;
+    voiceStop();
     try {
         var body = { session: state.currentId, text: text };
         if (state.pendingImage) body.image = state.pendingImage;
