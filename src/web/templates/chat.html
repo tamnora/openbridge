@@ -971,8 +971,14 @@
 
         /* ----- Cambios (git) ----- */
         .chg-files { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 0 0 14px; }
-        .chg-row { display: grid; grid-template-columns: 34px 1fr; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; align-items: center; }
+        .chg-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; align-items: center; }
         .chg-row:last-child { border-bottom: 0; }
+        .chg-rev {
+            background: transparent; border: 1px solid var(--border); color: var(--muted);
+            border-radius: 6px; width: 26px; height: 24px; line-height: 1; cursor: pointer; font: inherit; font-size: 12px;
+        }
+        .chg-rev:hover { color: var(--danger); border-color: var(--danger); }
+        .chg-rev:disabled { opacity: .4; cursor: not-allowed; }
         .chg-st { font-weight: 700; text-align: center; font-size: 11px; color: var(--muted); }
         .chg-st.mod { color: var(--warn-text, #d29922); }
         .chg-st.add { color: var(--accent); }

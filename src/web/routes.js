@@ -173,7 +173,7 @@ const OC_ALLOWED = {
     fs_read: ['path'],
     git_status: ['path'],
     git_diff: ['path'],
-    git_checkout: ['path'],
+    git_checkout: ['path', 'path'],
     tunnel_start: ['arg'],
     tunnel_stop: ['arg'],
     tunnel_list: [],

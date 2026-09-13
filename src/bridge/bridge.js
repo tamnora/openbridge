@@ -1594,11 +1594,18 @@ async function handleGitCommand(cmd) {
             if (r.code !== 0) throw new Error(r.err || 'no es un repositorio git');
             await api('command_done', { id: cmd.id, ok: true, text: JSON.stringify(parseGitStatus(r.text)), error: '' }, cmd._t);
         } else if (cmd.name === 'git_checkout') {
-            // Revierte los cambios de archivos RASTREADOS dentro de la carpeta
-            // de la sesion (`.` es relativo a esa carpeta). No toca nuevos.
-            const r = gitIn(folder, ['checkout', '--', '.']);
+            // Revierte cambios de archivos RASTREADOS dentro de la carpeta de la
+            // sesion. Sin 2do argumento revierte todo (`.`); con argumento,
+            // solo ese archivo relativo (sin `..` ni rutas absolutas).
+            let target = (cmd.args && cmd.args.length > 1) ? String(cmd.args[1]) : '.';
+            if (target !== '.') {
+                if (path.isAbsolute(target) || target.split(/[\\/]/).includes('..')) {
+                    throw new Error('ruta invalida');
+                }
+            }
+            const r = gitIn(folder, ['checkout', '--', target]);
             if (r.code !== 0) throw new Error(r.err || 'no se pudo revertir');
-            await api('command_done', { id: cmd.id, ok: true, text: JSON.stringify({ reverted: true }), error: '' }, cmd._t);
+            await api('command_done', { id: cmd.id, ok: true, text: JSON.stringify({ reverted: target }), error: '' }, cmd._t);
         } else {
             // diff HEAD: cambios preparados + sin preparar. `fs_result` admite
             // respuestas mas grandes que command_done (8000 car.).

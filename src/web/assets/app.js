@@ -3046,8 +3046,11 @@ async function loadChanges(folder) {
     }
     var list = '<div class="chg-files">';
     for (var i = 0; i < files.length; i++) {
+        var rev = files[i].status !== '??'
+            ? '<button type="button" class="chg-rev" data-path="' + esc(files[i].path) + '" title="Revertir este archivo" aria-label="Revertir este archivo">↩</button>'
+            : '';
         list += '<div class="chg-row"><span class="chg-st ' + chgStatusClass(files[i].status) + '">' + esc(files[i].status) + '</span>'
-            + '<span class="chg-path">' + esc(files[i].path) + '</span></div>';
+            + '<span class="chg-path">' + esc(files[i].path) + '</span>' + rev + '</div>';
     }
     list += '</div>';
     var tracked = files.some(function (f) { return f.status !== '??'; });
@@ -3069,15 +3072,27 @@ async function loadChanges(folder) {
 
 // Revertir cambios rastreados (con confirmacion): borra las modificaciones que
 // el agente u otros hicieron en archivos ya versionados. No toca los nuevos.
+// Sirve para un archivo puntual (boton de la fila) o para todos.
 if (els.viewChanges) {
     els.viewChanges.addEventListener('click', function (e) {
-        var btn = e.target.closest('#chgRevert');
-        if (!btn) return;
         var folder = changesFolder();
         if (!folder) return;
+        var one = e.target.closest('.chg-rev');
+        if (one) {
+            var rel = one.getAttribute('data-path');
+            if (!window.confirm('¿Revertir “' + rel + '”?\n\nNo se puede deshacer.')) return;
+            one.disabled = true;
+            ocCommand('git_checkout', [folder, rel], 15, 500).then(function (r) {
+                toast(r.ok ? 'revertido: ' + rel : (r.error || 'no se pudo revertir'), r.ok ? 'ok' : 'error');
+                renderChangesView();
+            });
+            return;
+        }
+        var all = e.target.closest('#chgRevert');
+        if (!all) return;
         if (!window.confirm('¿Revertir TODOS los cambios de archivos rastreados en “' + projectLabel(folder) + '”?\n\nNo se puede deshacer. Los archivos nuevos sin seguimiento no se tocan.')) return;
-        btn.disabled = true;
-        btn.textContent = 'revirtiendo…';
+        all.disabled = true;
+        all.textContent = 'revirtiendo…';
         ocCommand('git_checkout', [folder], 15, 500).then(function (r) {
             toast(r.ok ? 'cambios revertidos' : (r.error || 'no se pudo revertir'), r.ok ? 'ok' : 'error');
             renderChangesView();
