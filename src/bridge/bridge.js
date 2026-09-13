@@ -12,7 +12,7 @@
  */
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -1550,6 +1550,64 @@ async function handleFsCommand(cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// Cambios del proyecto (git status / git diff) para revisar lo que tocó el
+// agente desde el celular. Corre git en la carpeta de la sesión (validada
+// dentro del workspace, igual que proc_start).
+// ---------------------------------------------------------------------------
+function parseGitStatus(text) {
+    const files = [];
+    let branch = '';
+    for (const line of String(text).split('\n')) {
+        if (line === '') continue;
+        if (line.startsWith('## ')) { branch = line.slice(3).trim(); continue; }
+        const status = line.slice(0, 2).trim() || '?';
+        let p = line.slice(3);
+        const arrow = p.indexOf(' -> ');
+        if (arrow >= 0) p = p.slice(arrow + 4);
+        files.push({ status, path: p });
+    }
+    return { branch, files };
+}
+
+function gitIn(folder, args, timeout = 30000) {
+    const r = spawnSync('git', ['-C', folder].concat(args), {
+        encoding: 'utf8',
+        timeout,
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
+    });
+    if (r.error) throw new Error(r.error.message || 'no se pudo ejecutar git');
+    const text = String(r.stdout || '');
+    return { code: r.status, text, err: String(r.stderr || '').trim() };
+}
+
+async function handleGitCommand(cmd) {
+    let folder;
+    try { folder = procResolveFolder(cmd.args && cmd.args[0]); }
+    catch (e) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: e.message }, cmd._t);
+        return;
+    }
+    try {
+        if (cmd.name === 'git_status') {
+            const r = gitIn(folder, ['status', '--porcelain=v1', '-b', '--untracked-files=all']);
+            if (r.code !== 0) throw new Error(r.err || 'no es un repositorio git');
+            await api('command_done', { id: cmd.id, ok: true, text: JSON.stringify(parseGitStatus(r.text)), error: '' }, cmd._t);
+        } else {
+            // diff HEAD: cambios preparados + sin preparar. `fs_result` admite
+            // respuestas mas grandes que command_done (8000 car.).
+            const r = gitIn(folder, ['--no-pager', 'diff', 'HEAD', '--no-color', '--no-ext-diff', '--no-renames']);
+            if (r.code !== 0) throw new Error(r.err || 'no es un repositorio git');
+            await api('fs_result', { id: cmd.id, ok: true, text: JSON.stringify({ diff: r.text }), error: '' }, cmd._t);
+        }
+        log('git ' + cmd.name + ' ok en ' + folder);
+    } catch (e) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: e.message }, cmd._t);
+        log('git ' + cmd.name + ' error: ' + e.message);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Procesa comandos read-only encolados por la web.
 // ---------------------------------------------------------------------------
 
@@ -2042,6 +2100,11 @@ async function handleCommand(cmd) {
     // Comandos fs_* los resuelve el puente directamente (sin opencode CLI).
     if (cmd.name === 'fs_list' || cmd.name === 'fs_read') {
         await handleFsCommand(cmd);
+        return;
+    }
+    // Cambios git del proyecto (status/diff).
+    if (cmd.name === 'git_status' || cmd.name === 'git_diff') {
+        await handleGitCommand(cmd);
         return;
     }
     // Túneles también son del puente (procesos de esta PC).

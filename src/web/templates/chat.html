@@ -958,6 +958,27 @@
             color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center;
         }
 
+        /* ----- Cambios (git) ----- */
+        .chg-files { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 0 0 14px; }
+        .chg-row { display: grid; grid-template-columns: 34px 1fr; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; align-items: center; }
+        .chg-row:last-child { border-bottom: 0; }
+        .chg-st { font-weight: 700; text-align: center; font-size: 11px; color: var(--muted); }
+        .chg-st.mod { color: var(--warn-text, #d29922); }
+        .chg-st.add { color: var(--accent); }
+        .chg-st.del { color: var(--danger); }
+        .chg-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .diff {
+            background: var(--code-bg, var(--bg)); border: 1px solid var(--border);
+            border-radius: 8px; overflow: auto; padding: 10px 0; margin: 0 0 20px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px; line-height: 1.5;
+        }
+        .diff-line { white-space: pre; padding: 0 12px; }
+        .diff-line.add { background: rgba(63, 185, 80, .12); color: #3fb950; }
+        .diff-line.del { background: rgba(248, 81, 73, .12); color: #f85149; }
+        .diff-line.hunk { color: var(--accent); }
+        .diff-line.head { color: var(--muted); }
+
         .view-head { margin-bottom: 12px; }
         .view-head h2 { margin: 0 0 4px; font-size: 16px; }
         .view-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1159,6 +1180,7 @@
             <button data-view="search" type="button" title="Buscar">buscar</button>
             <button data-view="preview" type="button" title="Vista previa del proyecto (túnel)">preview</button>
             <button data-view="procs" type="button" title="Procesos de la sesión">procs</button>
+            <button data-view="changes" type="button" title="Cambios del proyecto (git)">cambios</button>
         </div>
         <div class="footer">
             <div class="row" id="bridgeStatusRow">
@@ -1235,6 +1257,7 @@
         <div id="viewHistory" class="view" style="display:none"></div>
         <div id="viewPreview" class="view" style="display:none"></div>
         <div id="viewProcs" class="view" style="display:none"></div>
+        <div id="viewChanges" class="view" style="display:none"></div>
 
         <footer id="statusbar">
             <span class="dot" id="sbDot"></span>

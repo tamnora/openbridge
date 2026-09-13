@@ -171,6 +171,8 @@ const OC_ALLOWED = {
     opencode_version: [],
     fs_list: ['path'],
     fs_read: ['path'],
+    git_status: ['path'],
+    git_diff: ['path'],
     tunnel_start: ['arg'],
     tunnel_stop: ['arg'],
     tunnel_list: [],

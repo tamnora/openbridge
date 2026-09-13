@@ -44,6 +44,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] **Dictado por voz** en el compositor (Web Speech API; se oculta si el navegador no la soporta).
 - [x] **QR** de la URL en `init`/`status`/`server` y comando `openbridge qr` (generador propio, sin dependencias).
 - [x] **Costo acumulado** (USD) por sesion y total en el sidebar, encabezado y statusbar.
+- [x] Vista **"cambios"** (git status + diff) del proyecto de la sesion, via el puente (funciona local y remoto).
 
 ## 2. Túnel y URL estable (PWA / Web Push)
 

@@ -45,6 +45,7 @@ var els = {
     btnSkin: document.getElementById('btnSkin'),
     skinPanel: document.getElementById('skinPanel'),
     viewProcs: document.getElementById('viewProcs'),
+    viewChanges: document.getElementById('viewChanges'),
     themeColor: document.getElementById('themeColor'),
     themeLink: document.getElementById('themeStylesheet'),
     statusbar: document.getElementById('statusbar'),
@@ -980,6 +981,7 @@ function showView(name) {
     els.viewHistory.style.display = 'none';
     els.viewPreview.style.display = 'none';
     els.viewProcs.style.display = 'none';
+    els.viewChanges.style.display = 'none';
 
     if (name !== 'procs') stopProcView();
 
@@ -1046,6 +1048,12 @@ function showView(name) {
         var pf = sessionProcFolder();
         els.hSub.textContent = pf ? projectLabel(pf) : 'de la sesión abierta';
         enterProcsView();
+    } else if (name === 'changes') {
+        els.viewChanges.style.display = '';
+        els.btnBack.style.display = 'none';
+        els.sendForm.style.display = 'none';
+        els.btnCmds.style.display = 'none';
+        renderChangesView();
     }
 
     if (els.fabNew) els.fabNew.classList.toggle('show', name === 'home');
@@ -2879,6 +2887,95 @@ function renderFilesError(msg) {
 
 function filesJoin(name) {
     return state.filesPath ? state.filesPath + '/' + name : name;
+}
+
+// ---------------------------------------------------------------------------
+// Cambios del proyecto (git status/diff) vía la cola del puente.
+// ---------------------------------------------------------------------------
+function changesFolder() {
+    return (state.currentSession && state.currentSession.folder) || '';
+}
+
+function renderChangesView() {
+    els.hTitle.textContent = 'cambios';
+    var folder = changesFolder();
+    els.hSub.textContent = folder ? projectLabel(folder) : 'de la sesión abierta';
+    if (!folder) {
+        els.viewChanges.innerHTML = '<div class="placeholder">Abrí un chat para ver los cambios de su proyecto.</div>';
+        return;
+    }
+    if (!state.online) {
+        els.viewChanges.innerHTML = '<div class="placeholder">El puente está apagado. Iniciá “OpenBridge” en tu PC.</div>';
+        return;
+    }
+    els.viewChanges.innerHTML = '<div class="view-head"><h2>cambios sin commitear</h2>'
+        + '<div class="view-sub">' + esc(projectLabel(folder)) + '</div></div>'
+        + '<div class="placeholder">consultando git…</div>';
+    loadChanges(folder);
+}
+
+function chgStatusClass(st) {
+    if (st === '??' || st === 'A') return 'add';
+    if (st.indexOf('D') >= 0) return 'del';
+    if (st.indexOf('M') >= 0 || st.indexOf('R') >= 0) return 'mod';
+    return '';
+}
+
+function renderDiff(text) {
+    var max = 200000;
+    var trunc = false;
+    if (text.length > max) { text = text.slice(0, max); trunc = true; }
+    var lines = text.split('\n');
+    var html = '';
+    for (var i = 0; i < lines.length; i++) {
+        var l = lines[i];
+        var cls = 'diff-line';
+        if (l.charAt(0) === '+') cls += ' add';
+        else if (l.charAt(0) === '-') cls += ' del';
+        else if (l.indexOf('@@') === 0) cls += ' hunk';
+        else if (l.indexOf('diff --git') === 0 || l.indexOf('index ') === 0 || l.indexOf('--- ') === 0 || l.indexOf('+++ ') === 0) cls += ' head';
+        html += '<div class="' + cls + '">' + esc(l || ' ') + '</div>';
+    }
+    if (trunc) html += '<div class="diff-line head">… (diff recortado)</div>';
+    return '<div class="diff">' + html + '</div>';
+}
+
+function changesHead(folder, branch) {
+    return '<div class="view-head"><h2>cambios sin commitear</h2><div class="view-sub">'
+        + esc(projectLabel(folder)) + (branch ? ' · ' + esc(branch) : '') + '</div></div>';
+}
+
+async function loadChanges(folder) {
+    var st = await ocCommand('git_status', [folder], 15, 500);
+    if (!st.ok) {
+        els.viewChanges.innerHTML = changesHead(folder, '')
+            + '<div class="placeholder">' + esc(st.error || 'no se pudo consultar git') + '</div>';
+        return;
+    }
+    var status = st.data || {};
+    var files = status.files || [];
+    if (!files.length) {
+        els.viewChanges.innerHTML = changesHead(folder, status.branch)
+            + '<div class="placeholder">Sin cambios: el árbol está limpio.</div>';
+        return;
+    }
+    var list = '<div class="chg-files">';
+    for (var i = 0; i < files.length; i++) {
+        list += '<div class="chg-row"><span class="chg-st ' + chgStatusClass(files[i].status) + '">' + esc(files[i].status) + '</span>'
+            + '<span class="chg-path">' + esc(files[i].path) + '</span></div>';
+    }
+    list += '</div>';
+    els.viewChanges.innerHTML = changesHead(folder, status.branch) + list + '<div class="placeholder">cargando diff…</div>';
+
+    var diff = await ocCommand('git_diff', [folder], 20, 700);
+    var diffHtml;
+    if (diff.ok) {
+        var text = (diff.data && diff.data.diff) || '';
+        diffHtml = text ? renderDiff(text) : '<div class="placeholder">Hay archivos nuevos o renombrados sin diff de contenido.</div>';
+    } else {
+        diffHtml = '<div class="placeholder">' + esc(diff.error || 'no se pudo obtener el diff') + '</div>';
+    }
+    els.viewChanges.innerHTML = changesHead(folder, status.branch) + list + diffHtml;
 }
 
 function renderFilesView() {
