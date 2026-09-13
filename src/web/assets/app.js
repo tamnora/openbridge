@@ -225,7 +225,13 @@ function updateStatusbar() {
             var pct = sessionTokensPct(state.currentSession);
             extra += ' · ' + tokTxt + ' tokens' + (pct ? ' (' + pct + ')' : '');
         }
+        var cost = fmtCost(state.currentSession.cost);
+        if (cost) extra += ' · ' + cost;
     }
+    var totalCost = 0;
+    for (var ci = 0; ci < state.sessions.length; ci++) totalCost += Number(state.sessions[ci].cost) || 0;
+    var totalTxt = fmtCost(totalCost);
+    if (totalTxt) extra += ' · ' + totalTxt + ' total';
     els.sbExtra.textContent = extra;
 }
 
@@ -765,6 +771,14 @@ function fmtTokens(n) {
     return String(n);
 }
 
+// Costo acumulado (USD) con precision segun magnitud ('' si no hay dato).
+function fmtCost(n) {
+    var v = Number(n) || 0;
+    if (v <= 0) return '';
+    var s = v >= 1 ? v.toFixed(2) : (v >= 0.01 ? v.toFixed(3) : v.toFixed(4));
+    return '$' + s.replace('.', ',');
+}
+
 // Ventana de contexto del modelo segun el catalogo (0 si no se conoce).
 function modelContext(model) {
     var c = state.catalog || {};
@@ -783,7 +797,8 @@ function sessionTokensLabel(s) {
 function sessionTokensTitle(s) {
     var tok = Math.round(Number(s.tokens) || 0);
     var ctx = modelContext(s.model);
-    return tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '');
+    var cost = fmtCost(s.cost);
+    return tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '') + (cost ? ' · ' + cost + ' acumulado' : '');
 }
 
 // Porcentaje de contexto consumido ('' si no hay datos).
@@ -801,7 +816,14 @@ function sessionTokensHtml(s) {
     return '<span class="stok" title="' + sessionTokensTitle(s) + '">' + label + '</span>';
 }
 
-// Subtitulo del encabezado: proyecto · modelo · agente · tokens/contexto.
+// Costo acumulado de la sesion ('' si no hay dato).
+function sessionCostHtml(s) {
+    var cost = fmtCost(s.cost);
+    if (!cost) return '';
+    return '<span class="scost" title="' + sessionTokensTitle(s) + '">' + cost + '</span>';
+}
+
+// Subtitulo del encabezado: proyecto · modelo · agente · tokens/contexto · costo.
 function sessionSubtitle(s) {
     var txt = projectLabel(s.folder) + ' · ' + (s.model || 'sin modelo') + ' · ' + (s.agent || 'build');
     var label = sessionTokensLabel(s);
@@ -809,6 +831,8 @@ function sessionSubtitle(s) {
         var pct = sessionTokensPct(s);
         txt += ' · ' + label + ' tokens' + (pct ? ' (' + pct + ')' : '');
     }
+    var cost = fmtCost(s.cost);
+    if (cost) txt += ' · ' + cost;
     return txt;
 }
 
@@ -833,6 +857,7 @@ function sessionItemHtml(s, withFolder) {
         + (withFolder ? '<span class="sfolder">' + esc(projectLabel(s.folder)) + '</span>' : '')
         + pen
         + sessionTokensHtml(s)
+        + sessionCostHtml(s)
         + '<span class="stime">' + esc(timeShort(s.last_ts)) + '</span>'
         + '</button>';
 }
