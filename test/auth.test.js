@@ -56,6 +56,17 @@ test('cookie: HttpOnly y Secure solo detras de https', () => {
     assert.match(secure, /Secure/);
 });
 
+test('cookie: no confia en X-Forwarded-Proto fuera de loopback', () => {
+    // Cliente directo por la red: el header no debe forzar Secure.
+    const remote = { headers: { 'x-forwarded-proto': 'https' }, socket: { remoteAddress: '10.0.0.5' } };
+    assert.doesNotMatch(auth.serializeCookie('x', 'v', remote, 60), /Secure/);
+    // TLS real siempre es seguro.
+    const tls = { headers: {}, socket: { remoteAddress: '10.0.0.5', encrypted: true } };
+    assert.match(auth.serializeCookie('x', 'v', tls, 60), /Secure/);
+    // Cadena de proxies: se toma el primer valor.
+    assert.match(auth.serializeCookie('x', 'v', fakeReq({ 'x-forwarded-proto': 'https, http' }), 60), /Secure/);
+});
+
 test('token del puente: header y query, y comparacion segura', () => {
     const app = { bridgeToken: 'tok-123' };
     assert.equal(auth.checkBridgeToken(app, fakeReq({ 'x-bridge-token': 'tok-123' })), true);

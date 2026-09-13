@@ -6,7 +6,7 @@
  */
 'use strict';
 
-const CACHE = 'openbridge-v3';
+const CACHE = 'openbridge-v4';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => {

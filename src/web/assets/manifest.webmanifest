@@ -1,6 +1,8 @@
 {
   "name": "OpenBridge",
   "short_name": "OpenBridge",
+  "id": "/",
+  "lang": "es",
   "description": "Chat con tu IA en el PC (opencode)",
   "start_url": "./chat.php",
   "scope": "./",

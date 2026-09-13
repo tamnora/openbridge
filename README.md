@@ -99,47 +99,79 @@ Movés la carpeta a donde quieras y sigue funcionando (es portable). Si venías
 de una versión anterior con los archivos sueltos, se **migran solos** a
 `.openbridge/` la primera vez que corras un comando.
 
-## Varias computadoras
+## Varias computadoras (hub + remotas)
 
-El hub (la PC con la app) puede atender **varias PCs** a la vez:
+La PC **hub** corre la app y el túnel; las demás PCs corren solo el **puente** y
+apuntan al hub. En el sidebar de la web elegís qué PC usar y ves sus proyectos y
+chats.
 
-- En la PC "hub": `openbridge init` + `openbridge server` (queda la app + túnel).
-- En otra PC: `openbridge init` y luego `openbridge bridge --api <url-del-hub>
-  --token <token> --id pc2 --name "PC 2"` (sin editar `config.json` a mano).
+Ejemplo concreto:
 
-En el sidebar de la web elegís qué PC usar y ves sus proyectos y chats.
+1. En el **hub** (tiene la app y la URL pública):
+   ```bash
+   openbridge init
+   openbridge server        # muestra estado, URL y QR
+   openbridge status        # volvés a ver la URL cuando quieras
+   ```
+2. Copiá el **token del puente** del hub: `.openbridge/app.json` → `bridgeToken`.
+3. En la **PC 2** (remota):
+   ```bash
+   openbridge init --tunnel none        # no necesita túnel propio
+   openbridge bridge --api https://tu-url-publica/api.php \
+     --token <bridgeToken> --id pc2 --name "PC 2"
+   ```
+4. Abrí la URL del hub desde el celular: en el sidebar aparecen **PC 1** y
+   **PC 2** para alternar.
+
+El puente remoto solo necesita salida a internet hacia el hub; no abre puertos ni
+túnel propio. Para que arranque solo en cada PC: `openbridge autostart install`.
 
 ## Túnel y URL estable
 
-Proveedores soportados (`--tunnel`): `tunnelmole` (gratis, sin cuenta),
-`ngrok` (cuenta + authtoken; admite dominio fijo con `--domain` en
-`app.json`) y `cloudflare` (quick tunnel de `cloudflared`). Con URL
-**aleatoria**, la suscripción push no persiste entre reinicios (el push está
-atado al origen). Para PWA/push estables conviene ngrok con dominio fijo o
-Cloudflare con dominio propio.
+Proveedores (`--tunnel` o `openbridge tunnel <prov>`): `tunnelmole` (gratis, sin
+cuenta), `ngrok` (cuenta + authtoken; admite **dominio fijo**) y `cloudflare`
+(quick tunnel). Ver/cambiar sin reconfigurar todo:
+
+```bash
+openbridge tunnel                                   # estado actual
+openbridge tunnel ngrok --domain mi-pc.ngrok.app    # URL fija (recomendado)
+openbridge stop && openbridge server                # reiniciar para aplicar
+```
+
+Con URL **aleatoria** la PWA y el push no persisten entre reinicios (están atados
+al origen). Para una URL estable usá ngrok con dominio fijo (o un named tunnel de
+Cloudflare). Escaneá el QR de `openbridge status`/`openbridge qr` para abrirla en
+el celular.
 
 ## Avisos push
 
-Las claves VAPID se generan solas en `init`. Con URL de túnel **aleatoria**, la
-suscripción push no persiste entre reinicios (el push está atado al origen). Para
-una URL fija hace falta un proveedor con dominio estable (ngrok/Cloudflare).
+Las claves VAPID se generan solas en `init`. Con URL de túnel aleatoria la
+suscripción no persiste entre reinicios (el push está atado al origen); la app la
+vuelve a registrar cuando la abrís en la URL nueva. Para que sea estable, usá una
+URL fija (ngrok con `--domain`).
 
 ## Seguridad
 
-- La app escucha solo en `127.0.0.1`; el túnel la expone.
-- Login con contraseña (scrypt) + CSRF y rate limit (5 intentos); token del
-  puente autogenerado.
+- La app escucha **solo en `127.0.0.1`**; el túnel la expone a internet.
+- Login con contraseña (scrypt), cookie firmada `HttpOnly` + `SameSite=Lax`,
+  **CSRF** y **rate limit** (5 intentos / 15 min); token del puente autogenerado.
+- La cookie usa `Secure` cuando el pedido llega por HTTPS **desde loopback** (el
+  túnel); no se confía en `X-Forwarded-Proto` de otros orígenes.
+- Respuestas con `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y
+  `Referrer-Policy: no-referrer`.
 - El túnel es **público mientras corre**: detenelo (`openbridge stop`) cuando no
-  lo uses.
+  lo uses y mantené la contraseña fuerte.
 
 ## Estado
 
 Proyecto en desarrollo. Ya funciona: `init`, `server` (segundo plano; `--stream`
-en primer plano), `stop`, `status`, `logs` (`--follow`), `bridge` (con flags),
-`passwd`, `import`, `reset`, `autostart`, `doctor`, login con rate limit, API
-completa, SSE, catálogo por PC, Web Push y túnel (TunnelMole/ngrok/cloudflare).
-Tests en `npm test`. Pendiente: re-suscripción push al cambiar la URL y más
-cobertura end-to-end.
+en primer plano), `stop`, `status`, `qr`, `tunnel`, `logs` (`--follow`), `bridge`
+(con flags), `passwd`, `import`, `reset`, `autostart`, `doctor`; login con rate
+limit; API completa y SSE; catálogo por PC; Web Push; túnel
+(TunnelMole/ngrok/cloudflare); y en la web: chat con streaming, adjuntar imagen,
+dictado por voz, plantillas de prompts, tokens/contexto y **costo** por sesión,
+vista de archivos, vista de **cambios** (git status/diff) con **revertir**,
+búsqueda global y sesiones de opencode. Tests en `npm test`.
 
 ## Licencia
 

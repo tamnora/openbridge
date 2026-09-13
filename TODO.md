@@ -58,7 +58,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Proveedores de túnel enchufables: `tunnelmole`, `ngrok`, `cloudflare`.
 - [x] `openbridge tunnel` (estado/cambio de proveedor) y guardar el dominio en `app.json`; `init --domain`.
 - [ ] Re-suscripción push automática cuando cambia la URL.
-- [ ] `trust proxy` explícito (hoy `isSecure` mira `X-Forwarded-Proto` directo).
+- [x] `trust proxy` explícito: la cookie usa `Secure` con `X-Forwarded-Proto` solo desde loopback.
 
 ## 3. CLI / ciclo de vida
 
@@ -73,7 +73,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 ## 4. Multi-PC (hub + remotas)
 
 - [x] `openbridge bridge` con flags **`--api`, `--token`, `--id`, `--name`**.
-- [ ] Documentar el flujo hub/remoto en README con un ejemplo concreto.
+- [x] Documentar el flujo hub/remoto en README con un ejemplo concreto.
 - [ ] Probar el selector PC1/PC2 de la web con dos puentes reales contra el mismo hub.
 - [ ] Evaluar comando `openbridge join <url>` para vincular una PC nueva al hub.
 
@@ -113,7 +113,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 ## 9. Deuda técnica / detalles
 
 - [ ] Branding: quedan claves `ocx_*`/`OPENCONEX_HOME` y el alias `openconex` (funcional; unificar a `ob_`/`openbridge`).
-- [ ] Revisar `web/assets/sw.js` (nombre de caché, fallback offline) y `manifest.webmanifest`.
+- [x] Revisar `web/assets/sw.js` (nombre de caché, fallback offline) y `manifest.webmanifest` (id/lang).
 - [ ] Decidir si se mantiene el comando `mode` (local/remoto/dual) o se elimina.
 - [x] `docs/ARCHITECTURE.md` con arquitectura y decisiones.
 - [x] Guardar todo en `<base>/.openbridge/` con migración automática del layout viejo.

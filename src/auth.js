@@ -38,8 +38,16 @@ function parseCookies(header) {
     return out;
 }
 
+// Detras del tunel el server recibe los pedidos desde loopback (el tunel corre
+// en la misma maquina y reenvia a 127.0.0.1). Solo en ese caso confiamos en
+// X-Forwarded-Proto: un cliente que llegara directo por la red no puede forzar
+// el flag Secure de la cookie. Sin info de socket (tests), se confia.
 function isSecure(req) {
-    const proto = req.headers['x-forwarded-proto'];
+    if (req.socket && req.socket.encrypted) return true;
+    const remote = req.socket && req.socket.remoteAddress;
+    const loopback = !remote || remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+    if (!loopback) return false;
+    const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
     return proto === 'https';
 }
 
