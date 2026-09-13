@@ -71,6 +71,7 @@ primer plano usá `openbridge server --stream`; para detenerlo, `openbridge stop
 | `openbridge server` | Arranca app + puente + túnel en **segundo plano** y muestra el estado (`--stream` = primer plano) |
 | `openbridge stop` | Detiene el server y su árbol de procesos |
 | `openbridge status` | Estado, URL, puente en línea y chats |
+| `openbridge qr` | Muestra la URL (pública o local) como QR para escanear desde el celular |
 | `openbridge logs` | Logs (`--follow`, `--server`, `--bridge`) |
 | `openbridge bridge` | Corre **solo** el puente (`--api --token --id --name`) |
 | `openbridge import` | Trae `data/` de OpenConex (`<data-dir> [--force]`) |

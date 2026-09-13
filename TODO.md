@@ -42,6 +42,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Ver **tokens consumidos y capacidad de contexto** por sesion (sidebar, encabezado, statusbar y franja de trabajo).
 - [x] Indicador **KITT** con bordes y estela luminosa.
 - [x] **Dictado por voz** en el compositor (Web Speech API; se oculta si el navegador no la soporta).
+- [x] **QR** de la URL en `init`/`status`/`server` y comando `openbridge qr` (generador propio, sin dependencias).
 
 ## 2. Túnel y URL estable (PWA / Web Push)
 

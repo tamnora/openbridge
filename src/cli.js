@@ -10,6 +10,7 @@ const config = require('./config');
 const store = require('./store');
 const auth = require('./auth');
 const push = require('./push');
+const qr = require('./qr');
 const web = require('./web/server');
 const tunnel = require('./tunnel');
 const log = require('./log');
@@ -115,6 +116,15 @@ function clearRuntime() {
     for (const f of [runtimePath(), paths.pidPath(), paths.bridgeLockPath()]) {
         try { fs.unlinkSync(f); } catch (e) { /* nada */ }
     }
+}
+
+// Muestra la URL como QR en la consola (para abrirla en el celular).
+// Devuelve false si la URL es demasiado larga para el QR.
+function printQr(url) {
+    const art = qr.qrTerminal(url, 2);
+    if (!art) return false;
+    console.log(art);
+    return true;
 }
 
 // Detiene el server en ejecucion (si lo hay) matando server + hijos. Devuelve
@@ -254,6 +264,9 @@ async function cmdInit(argv) {
     console.log('  tunel     : ' + provider);
     console.log('  carpetas  : ' + folders.length + ' en folders.json');
     if (generated) console.log('  -> guarda esta contrasena: no se vuelve a mostrar.');
+    console.log('');
+    console.log('  QR local (misma PC):');
+    printQr('http://127.0.0.1:' + port + '/chat.php');
     console.log('');
     console.log('Siguiente paso:  openbridge server');
     return 0;
@@ -439,11 +452,39 @@ async function printStatus() {
         const sessions = await store.sessionsListFull();
         console.log('  chats  : ' + sessions.length);
     } catch (e) { /* sin datos todavia */ }
+    const target = rt.publicUrl || rt.localUrl;
+    if (target) {
+        console.log('');
+        console.log(rt.publicUrl ? '  escanea para abrir en el celular:' : '  QR local (misma PC):');
+        if (!printQr(target)) console.log('  (URL demasiado larga para el QR; usa el link de arriba)');
+    }
     return true;
 }
 
 async function cmdStatus() {
     await printStatus();
+    return 0;
+}
+
+// Muestra la URL como QR para escanear desde el celular.
+async function cmdQr() {
+    const rt = readRuntime();
+    if (rt && pidAlive(rt.pid) && (rt.publicUrl || rt.localUrl)) {
+        const target = rt.publicUrl || rt.localUrl;
+        console.log((rt.publicUrl ? 'URL publica' : 'URL local') + ': ' + target);
+        console.log('');
+        if (!printQr(target)) { console.log('URL demasiado larga para el QR.'); return 1; }
+        return 0;
+    }
+    if (!paths.exists()) {
+        console.error('No hay configuracion. Corre primero: openbridge init');
+        return 1;
+    }
+    const app = config.readApp();
+    const url = 'http://' + (app.host || '127.0.0.1') + ':' + (app.port || 8799) + '/chat.php';
+    console.log('URL local (el server no esta corriendo): ' + url);
+    console.log('');
+    if (!printQr(url)) { console.log('URL demasiado larga para el QR.'); return 1; }
     return 0;
 }
 
@@ -743,6 +784,7 @@ function usage() {
     console.log('  passwd    Cambia la contrasena de acceso (--password <clave>)');
     console.log('  stop      Detiene el server en segundo plano');
     console.log('  status    Estado del server, puente y chats');
+    console.log('  qr        Muestra la URL (publica o local) como QR para el celular');
     console.log('  logs      Ultimas lineas de los logs (--follow --server --bridge)');
     console.log('  bridge    Corre solo el puente (--api --token --id --name)');
     console.log('  import    Trae data/ de OpenConex (<data-dir> [--force])');
@@ -773,6 +815,7 @@ async function main(argv) {
         case 'server': case 'start': return cmdServer(args.slice(1));
         case 'stop': return cmdStop();
         case 'status': return cmdStatus();
+        case 'qr': return cmdQr();
         case 'logs': return cmdLogs(args.slice(1));
         case 'bridge': return cmdBridge(args.slice(1));
         case 'import': return cmdImport(args.slice(1));
