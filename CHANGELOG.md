@@ -4,6 +4,16 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [0.3.0] - 2026-09-13
+
+### Cambios
+
+- web: revertir un archivo puntual desde la vista cambios
+- cli: comando tunnel (estado/cambio de proveedor y dominio fijo)
+- web: plantillas de prompts y boton de revertir cambios
+- web: vista de cambios del proyecto (git status/diff) via el puente
+- release: recupera flags que npm se queda (--yes, --tag, --dry-run, --preid)
+
 ## [0.2.0] - 2026-09-13
 
 ### Cambios
