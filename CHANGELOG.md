@@ -4,6 +4,17 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [0.2.0] - 2026-09-13
+
+### Cambios
+
+- web: muestra el costo acumulado por sesion y total
+- cli: QR de la URL (init/status/server y comando qr)
+- web: dictado por voz en el compositor (Web Speech API)
+- release: exporta logica de version/changelog y agrega tests
+- release: proceso privado con guard de dueno, semver y dist-tags
+- UI: porcentaje de contexto, boton ver archivos y badge plan; refresco de tokens al responder
+
 ## [0.1.0] - 2026-09-11
 
 Primera version publicada. Paquete npm **`@danieltmn/openbridge`** y repo
