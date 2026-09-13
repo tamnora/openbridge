@@ -21,7 +21,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import readline from 'node:readline';
 
@@ -66,13 +66,13 @@ function readPkg() {
     return JSON.parse(readFileSync(pkgPath, 'utf8'));
 }
 
-function parseVersion(v) {
+export function parseVersion(v) {
     const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-.]+))?(?:\+[0-9A-Za-z-.]+)?$/.exec(String(v).trim());
     if (!m) return null;
     return { major: +m[1], minor: +m[2], patch: +m[3], pre: m[4] || null };
 }
 
-function bumpPre(pre, preid) {
+export function bumpPre(pre, preid) {
     if (!pre) return preid + '.0';
     const parts = pre.split('.');
     const last = parts[parts.length - 1];
@@ -83,7 +83,7 @@ function bumpPre(pre, preid) {
     return pre + '.0';
 }
 
-function computeVersion(current, spec, preid) {
+export function computeVersion(current, spec, preid) {
     const cur = parseVersion(current);
     if (!cur) fail('version actual invalida en package.json: ' + current);
     if (spec === 'patch') return cur.major + '.' + cur.minor + '.' + (cur.patch + 1);
@@ -98,7 +98,7 @@ function computeVersion(current, spec, preid) {
     fail('version o bump invalido: `' + spec + '` (usar patch|minor|major|prerelease|X.Y.Z[-pre])');
 }
 
-function distTagFor(version, override) {
+export function distTagFor(version, override) {
     if (override) return override;
     const v = parseVersion(version);
     if (v && v.pre) return v.pre.split('.')[0];
@@ -121,16 +121,19 @@ function changelogNotes() {
     return lines.map((s) => '- ' + s).join('\n');
 }
 
-function insertChangelog(version, notes) {
-    const date = new Date().toISOString().slice(0, 10);
-    const section = '## [' + version + '] - ' + date + '\n\n### Cambios\n\n' + notes + '\n';
-    let cl = readFileSync(changelogPath, 'utf8');
+export function renderChangelog(cl, version, notes, date) {
+    const day = date || new Date().toISOString().slice(0, 10);
+    const section = '## [' + version + '] - ' + day + '\n\n### Cambios\n\n' + notes + '\n';
     // Inserta antes del primer `## [x.y.z]`, saltando un `## [Unreleased]`.
     const marker = /\n## \[(?!Unreleased\])/;
     const m = marker.exec(cl);
-    if (!m) cl = cl.replace(/\s*$/, '') + '\n\n' + section;
-    else cl = cl.slice(0, m.index + 1) + section + '\n' + cl.slice(m.index + 1);
-    writeFileSync(changelogPath, cl);
+    if (!m) return cl.replace(/\s*$/, '') + '\n\n' + section;
+    return cl.slice(0, m.index + 1) + section + '\n' + cl.slice(m.index + 1);
+}
+
+function insertChangelog(version, notes) {
+    const cl = readFileSync(changelogPath, 'utf8');
+    writeFileSync(changelogPath, renderChangelog(cl, version, notes));
 }
 
 function parseArgs(argv) {
@@ -240,7 +243,8 @@ async function main() {
 
     if (o.dryRun) {
         console.log('  dry-run: nada cambió. Comandos que se ejecutarian:');
-        console.log('    npm version ' + version + ' --no-git-tag-version');
+        console.log('    package.json: version -> ' + version);
+        console.log('    CHANGELOG.md: nueva seccion [' + version + ']');
         console.log('    git add package.json CHANGELOG.md');
         console.log('    git commit -m "chore(release): v' + version + '"');
         console.log('    git tag -a v' + version + ' -m "v' + version + '"');
@@ -280,4 +284,7 @@ async function main() {
     console.log('');
 }
 
-main().catch((e) => fail(e && e.message ? e.message : String(e)));
+const invokedDirectly = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+if (invokedDirectly) {
+    main().catch((e) => fail(e && e.message ? e.message : String(e)));
+}
