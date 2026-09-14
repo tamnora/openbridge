@@ -123,9 +123,20 @@ function changelogNotes() {
 
 export function renderChangelog(cl, version, notes, date) {
     const day = date || new Date().toISOString().slice(0, 10);
-    const section = '## [' + version + '] - ' + day + '\n\n### Cambios\n\n' + notes + '\n';
-    // Inserta antes del primer `## [x.y.z]`, saltando un `## [Unreleased]`.
-    const marker = /\n## \[(?!Unreleased\])/;
+    const header = '## [' + version + '] - ' + day;
+    // Si hay una seccion [Unreleased], se promueve a la version nueva (conserva
+    // su contenido en vez de duplicarlo).
+    const un = /(^|\n)## \[Unreleased\][^\n]*\n([\s\S]*?)(?=\n## \[|$)/.exec(cl);
+    if (un) {
+        const body = un[2].replace(/^\n+/, '').replace(/\s+$/, '') || ('### Cambios\n\n' + notes);
+        const promoted = header + '\n\n' + body + '\n';
+        const head = cl.slice(0, un.index).replace(/\s+$/, '');
+        const after = cl.slice(un.index + un[0].length).replace(/^\n+/, '\n');
+        return (head ? head + '\n\n' : '') + promoted + after;
+    }
+    const section = header + '\n\n### Cambios\n\n' + notes + '\n';
+    // Inserta antes del primer `## [x.y.z]` (que no sea `## [Unreleased]`).
+    const marker = /\n## \[(?!Unreleased)/;
     const m = marker.exec(cl);
     if (!m) return cl.replace(/\s*$/, '') + '\n\n' + section;
     return cl.slice(0, m.index + 1) + section + '\n' + cl.slice(m.index + 1);

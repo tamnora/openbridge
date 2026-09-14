@@ -64,6 +64,18 @@ usuario y contraseña. Para correrlo en primer plano usá
 --dir <ruta>         casa portable (default: directorio actual)
 ```
 
+## Actualizar
+
+```bash
+npm i -g @danieltmn/openbridge@latest     # o: npx @danieltmn/openbridge@latest …
+```
+
+La configuración y los datos en `.openbridge/` se **migran solos**: el layout
+viejo (archivos sueltos) pasa a `.openbridge/`, y el `username`/`password` de una
+instalación de un solo usuario se convierte en el **primer admin** de `users[]`
+(con la misma contraseña). Por el cambio de formato de sesión, **hay que volver a
+iniciar sesión** una vez; los chats, carpetas, túnel y push se conservan.
+
 ## Comandos
 
 | Comando | Qué hace |

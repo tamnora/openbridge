@@ -62,12 +62,26 @@ test('release: parseArgs acepta flags y el entorno de npm', async () => {
     }
 });
 
-test('release: renderChangelog salta Unreleased', async () => {
+test('release: renderChangelog inserta antes de la version previa (sin Unreleased)', async () => {
     const { renderChangelog } = await import('../scripts/release.mjs');
-    const original = '# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-09-11\n\n- algo\n';
+    const original = '# Changelog\n\nIntro.\n\n## [0.1.0] - 2026-09-11\n\n- algo\n';
     const out = renderChangelog(original, '0.2.0', '- nuevo', '2026-09-13');
 
-    assert.ok(out.indexOf('## [Unreleased]') < out.indexOf('## [0.2.0]'));
+    assert.match(out, /## \[0\.2\.0\] - 2026-09-13/);
     assert.ok(out.indexOf('## [0.2.0]') < out.indexOf('## [0.1.0]'));
+    assert.match(out, /- nuevo/);
+    assert.equal(out.match(/# Changelog/g).length, 1);
+});
+
+test('release: promueve [Unreleased] a la version nueva', async () => {
+    const { renderChangelog } = await import('../scripts/release.mjs');
+    const original = '# Changelog\n\nIntro.\n\n## [Unreleased]\n\n### Agregado\n\n- algo nuevo\n\n## [0.3.0] - 2026-09-13\n\n### Cambios\n\n- viejo\n';
+    const out = renderChangelog(original, '0.4.0', '- generado', '2026-09-14');
+
+    assert.match(out, /## \[0\.4\.0\] - 2026-09-14/);
+    assert.doesNotMatch(out, /Unreleased/);
+    assert.match(out, /- algo nuevo/);
+    assert.doesNotMatch(out, /- generado/);
+    assert.ok(out.indexOf('## [0.4.0]') < out.indexOf('## [0.3.0]'));
 });
 
