@@ -133,7 +133,8 @@ Ejemplo concreto:
 3. En la **PC 2** (remota):
    ```bash
    openbridge join https://tu-url-publica --token <bridgeToken> --id pc2 --name "PC 2"
-   # guarda la config y arranca el puente; con --no-start solo guarda
+   # acepta la base, /chat.php o /api.php; se normaliza a /api.php
+   # con --no-start solo guarda la config
    ```
    (equivale a `openbridge bridge --api … --token … --id … --name …`, pero
    persiste la config para no repetir flags)

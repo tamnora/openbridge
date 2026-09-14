@@ -624,17 +624,28 @@ async function cmdBridge(argv) {
 // join: esta PC se suma como puente de un hub (otra PC con `openbridge server`).
 // Guarda la URL/token/identidad en config.json y arranca el puente.
 // ---------------------------------------------------------------------------
+// Normaliza la URL del hub a su endpoint de API: acepta la base, /chat.php o
+// /api.php y devuelve siempre algo terminado en /api.php (lo que espera el
+// puente). Sin esto, un `join https://host` apuntaba a / y no al API.
+function hubApiUrl(raw) {
+    let u = String(raw || '').trim().replace(/\/+$/, '');
+    u = u.replace(/\/chat\.php$/i, '');
+    if (!/\/api\.php$/i.test(u)) u += '/api.php';
+    return u;
+}
+
 async function cmdJoin(argv) {
     const { flags, _ } = parseArgs(argv);
     const url = String(_[0] || flags.api || '').trim();
     if (!url || !/^https?:\/\//i.test(url)) {
         console.error('Uso: openbridge join <url-del-hub> [--token <t>] [--id <pc>] [--name "<nombre>"] [--no-start]');
         console.error('Ej.:  openbridge join https://mi-pc.trycloudflare.com --token <t> --id pc2 --name "PC oficina"');
+        console.error('(acepta la base, /chat.php o /api.php; se normaliza a /api.php)');
         return 1;
     }
     paths.ensureDirs();
     const cfg = config.readBridge();
-    cfg.apiUrl = url.replace(/\/+$/, '');
+    cfg.apiUrl = hubApiUrl(url);
     if (typeof flags.token === 'string') cfg.apiToken = flags.token;
     if (typeof flags.id === 'string') cfg.bridgeId = sanitizeId(flags.id);
     else if (!cfg.bridgeId) cfg.bridgeId = sanitizeId(os.hostname());

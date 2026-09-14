@@ -4,6 +4,13 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Corregido
+
+- `openbridge join` normaliza la URL del hub a `/api.php` (antes, pasar la base
+  o `/chat.php` apuntaba a `/` y el puente se quedaba sin trabajo).
+
 ## [0.5.0] - 2026-09-14
 
 ### Agregado
