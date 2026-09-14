@@ -167,6 +167,12 @@ suscripción no persiste entre reinicios (el push está atado al origen); la app
 vuelve a registrar cuando la abrís en la URL nueva. Para que sea estable, usá una
 URL fija (ngrok con `--domain`).
 
+## MCP
+
+La web tiene una vista **mcp** y el chat acepta `/mcp`: muestran los servidores
+MCP de opencode y su estado (`opencode mcp list`). El comando corre en la PC del
+puente, así que refleja la configuración de opencode de esa computadora.
+
 ## Seguridad
 
 - La app escucha **solo en `127.0.0.1`**; el túnel la expone a internet.

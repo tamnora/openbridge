@@ -17,6 +17,9 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
   CI.
 - Test end-to-end del puente con `opencode` mockeado (`test/bridge.test.js`) y
   tests del CLI (`test/cli.test.js`).
+- **MCP**: vista en la web y comando de chat `/mcp` que muestran los servidores
+  MCP de opencode y su estado (`opencode mcp list`); comando de puente
+  `mcp_list`.
 - `CONTRIBUTING.md`.
 
 ### Cambiado

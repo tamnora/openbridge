@@ -66,6 +66,7 @@ var els = {
     skinPanel: document.getElementById('skinPanel'),
     viewProcs: document.getElementById('viewProcs'),
     viewChanges: document.getElementById('viewChanges'),
+    viewMcp: document.getElementById('viewMcp'),
     themeColor: document.getElementById('themeColor'),
     themeLink: document.getElementById('themeStylesheet'),
     statusbar: document.getElementById('statusbar'),
@@ -120,6 +121,7 @@ var CMDS = [
     { cmd: '/compact', desc: 'Liberar contexto' },
     { cmd: '/models', desc: 'Proveedores y búsqueda de modelos' },
     { cmd: '/agents', desc: 'Listar agentes disponibles' },
+    { cmd: '/mcp', desc: 'Servidores MCP de opencode' },
     { cmd: '/folders', desc: 'Carpetas del workspace' },
     { cmd: '/workspace', desc: 'Mostrar el espacio de trabajo' },
     { cmd: '/status', desc: 'Estado del puente' },
@@ -1008,6 +1010,7 @@ function showView(name) {
     els.viewPreview.style.display = 'none';
     els.viewProcs.style.display = 'none';
     els.viewChanges.style.display = 'none';
+    els.viewMcp.style.display = 'none';
 
     if (name !== 'procs') stopProcView();
 
@@ -1080,6 +1083,12 @@ function showView(name) {
         els.sendForm.style.display = 'none';
         els.btnCmds.style.display = 'none';
         renderChangesView();
+    } else if (name === 'mcp') {
+        els.viewMcp.style.display = '';
+        els.btnBack.style.display = 'none';
+        els.sendForm.style.display = 'none';
+        els.btnCmds.style.display = 'none';
+        renderMcpView();
     }
 
     if (els.fabNew) els.fabNew.classList.toggle('show', name === 'home');
@@ -3021,6 +3030,36 @@ function renderChangesView() {
         + '<div class="view-sub">' + esc(projectLabel(folder)) + '</div></div>'
         + '<div class="placeholder">consultando git…</div>';
     loadChanges(folder);
+}
+
+// ---------------------------------------------------------------------------
+// Vista MCP: estado de los servidores MCP de opencode (opencode mcp list).
+// ---------------------------------------------------------------------------
+function renderMcpView() {
+    els.hTitle.textContent = 'mcp';
+    els.hSub.textContent = 'servidores MCP de opencode';
+    if (!state.online) {
+        els.viewMcp.innerHTML = '<div class="placeholder">El puente está apagado. Iniciá “OpenBridge” en tu PC.</div>';
+        return;
+    }
+    els.viewMcp.innerHTML = '<div class="view-head"><h2>servidores MCP</h2>'
+        + '<div class="view-sub">opencode mcp list</div></div>'
+        + '<div class="placeholder">consultando opencode…</div>';
+    loadMcp();
+}
+
+async function loadMcp() {
+    var res = await ocCommand('mcp_list', [], 15, 700);
+    if (!els.viewMcp) return;
+    var head = '<div class="view-head"><h2>servidores MCP</h2>'
+        + '<div class="view-sub">opencode mcp list</div></div>';
+    if (!res.ok) {
+        els.viewMcp.innerHTML = head + '<div class="placeholder">' + esc(res.error || 'no se pudo consultar') + '</div>';
+        return;
+    }
+    var output = (res.data && res.data.output) || '';
+    els.viewMcp.innerHTML = head + '<pre class="codeblock">'
+        + esc(output || 'No hay servidores MCP configurados.') + '</pre>';
 }
 
 function chgStatusClass(st) {

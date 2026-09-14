@@ -33,6 +33,9 @@ const MOCK_OC = [
     "    out(JSON.stringify({ type: 'text', sessionID: 'ses_mock1', part: { text: 'respuesta mock' } }));",
     "} else if (args[0] === 'export') {",
     "    out(JSON.stringify({ info: { directory: process.cwd(), title: 'mock', cost: 0.001, tokens: { input: 1, output: 2, reasoning: 0 } }, messages: [] }));",
+    "} else if (args[0] === 'mcp') {",
+    "    out('• mariadb connected');",
+    "    out('• playwright connected');",
     "} else {",
     "    out('mock');",
     "}",
@@ -41,8 +44,9 @@ const MOCK_OC = [
 ].join('\n');
 
 function startMockApi(workspace) {
-    const state = { sent: false, respond: null, resolveRespond: null, seen: [] };
+    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, seen: [] };
     const responded = new Promise((resolve) => { state.resolveRespond = resolve; });
+    const commanded = new Promise((resolve) => { state.resolveCommand = resolve; });
     const server = http.createServer((req, res) => {
         let raw = '';
         req.on('data', (c) => { raw += c; });
@@ -68,6 +72,7 @@ function startMockApi(workspace) {
                             text: 'hola mock',
                             session: { folder: workspace, model: 'mock/model', agent: 'build' },
                         }],
+                        commands: [{ id: 9, name: 'mcp_list', args: [] }],
                     };
                 } else {
                     json = { ok: true, known_oc: [], messages: [], commands: [], folders: [] };
@@ -75,6 +80,9 @@ function startMockApi(workspace) {
             } else if (action === 'respond') {
                 try { state.respond = JSON.parse(raw || '{}'); } catch (e) { state.respond = {}; }
                 if (state.resolveRespond) state.resolveRespond(state.respond);
+            } else if (action === 'command_done') {
+                try { state.command = JSON.parse(raw || '{}'); } catch (e) { state.command = {}; }
+                if (state.resolveCommand) state.resolveCommand(state.command);
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(json));
@@ -85,6 +93,7 @@ function startMockApi(workspace) {
             state.port = server.address().port;
             state.server = server;
             state.responded = responded;
+            state.commanded = commanded;
             resolve(state);
         });
     });
@@ -157,4 +166,22 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     assert.equal(payload.opencode_session, 'ses_mock1');
     assert.ok(api.seen.includes('ping'), 'el puente debe hacer ping al arrancar');
     assert.ok(api.seen.includes('sync_catalog'), 'el puente debe sincronizar el catalogo');
+
+    // El primer poll también encoló un `mcp_list`: el puente lo resuelve y
+    // devuelve la salida de `opencode mcp list` en JSON.
+    let cmdTimer = null;
+    const cmdTimeout = new Promise((_, reject) => {
+        cmdTimer = setTimeout(() => reject(new Error('timeout esperando "command_done" (mcp_list)')), 15000);
+    });
+    let done;
+    try {
+        done = await Promise.race([api.commanded, cmdTimeout]);
+    } finally {
+        clearTimeout(cmdTimer);
+    }
+    assert.equal(done.id, 9);
+    assert.equal(done.ok, true);
+    const out = JSON.parse(done.text);
+    assert.match(out.output, /mariadb connected/);
+    assert.match(out.output, /playwright connected/);
 });

@@ -990,6 +990,16 @@ async function runMessage(msg) {
         return { text: '', opencodeSession: null, done: true };
     }
 
+    if (name === 'mcp') {
+        log('comando /mcp');
+        const r = await runCli(['mcp', 'list'], { timeout: 30000 });
+        const text = r.ok
+            ? (r.text || 'No hay servidores MCP configurados.')
+            : 'No se pudieron listar los MCP: ' + (r.text || ('exit ' + r.code));
+        await respondSimple(msg, text, false);
+        return { text: '', opencodeSession: null, done: true };
+    }
+
     if (name === 'workspace') {
         log('comando /workspace');
         const ws = config.workspace ? path.resolve(config.workspace) : '';
@@ -1029,6 +1039,7 @@ async function runMessage(msg) {
             + '• /compact, /resumen, /summarize — liberar contexto\n'
             + '• /models [filtro] — proveedores disponibles o búsqueda de modelos\n'
             + '• /agents — listar agentes disponibles\n'
+            + '• /mcp — servidores MCP de opencode y su estado\n'
             + '• /folders, /carpetas, /dirs — listar carpetas del workspace\n'
             + '• /workspace — mostrar el espacio de trabajo\n'
             + '• /status, /estado — estado del puente\n'
@@ -2128,6 +2139,19 @@ async function handleCommand(cmd) {
     // Comandos fs_* los resuelve el puente directamente (sin opencode CLI).
     if (cmd.name === 'fs_list' || cmd.name === 'fs_read') {
         await handleFsCommand(cmd);
+        return;
+    }
+    // Servidores MCP de opencode: se devuelve JSON con la salida cruda para que
+    // la web la muestre en el panel.
+    if (cmd.name === 'mcp_list') {
+        const r = await runCli(['mcp', 'list'], { timeout: 30000 });
+        await api('command_done', {
+            id: cmd.id,
+            ok: r.ok,
+            text: JSON.stringify({ output: r.text || '', ok: r.ok }),
+            error: r.ok ? '' : ('exit ' + r.code),
+        }, cmd._t);
+        log('comando #' + cmd.id + ' mcp_list (ok=' + r.ok + ')');
         return;
     }
     // Cambios git del proyecto (status/diff/revertir).

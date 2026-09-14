@@ -196,6 +196,7 @@ const OC_ALLOWED = {
     session_list: [],
     session_info: ['arg'],
     opencode_version: [],
+    mcp_list: [],
     fs_list: ['path'],
     fs_read: ['path'],
     git_status: ['path'],
