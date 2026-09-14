@@ -234,3 +234,46 @@ test('API: roles - user puede chatear pero no borrar ni correr procesos', async 
     assert.equal(fsList.status, 200);
     assert.equal(JSON.parse(fsList.body).ok, true);
 });
+
+test('API: instalacion legada (username/password) migra y loguea', async (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-api-legacy-'));
+    paths.setHome(home);
+    paths.ensureDirs();
+
+    const app = {
+        port: 0,
+        host: '127.0.0.1',
+        baseUrl: 'http://127.0.0.1',
+        username: 'admin',
+        password: config.hashPassword('secreta'),
+        csrfSecret: 'csrf-secret',
+        bridgeToken: 'bridge-token',
+        vapid: { publicKey: '', privateKey: '' },
+        tunnel: { provider: 'none', domain: '' },
+    };
+    const server = web.createServer(app);
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    t.after(() => {
+        server.close();
+        fs.rmSync(home, { recursive: true, force: true });
+    });
+
+    const jar = {};
+    const page = await request(port, { url: '/login.php' });
+    addCookies(jar, page);
+    const csrf = /name="csrf" value="([^"]+)"/.exec(page.body)[1];
+    const form = 'csrf=' + encodeURIComponent(csrf) + '&username=admin&password=secreta';
+    const login = await request(port, {
+        method: 'POST', url: '/login.php',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(jar), 'Content-Length': Buffer.byteLength(form) },
+        body: form,
+    });
+    assert.equal(login.status, 302);
+    addCookies(jar, login);
+    assert.ok(jar.ob_session);
+    assert.equal(decodeSession(jar.ob_session).u, 'u1');
+
+    const boot = await request(port, { url: '/api.php?action=bootstrap', headers: { Cookie: cookieHeader(jar) } });
+    assert.equal(JSON.parse(boot.body).ok, true);
+});
