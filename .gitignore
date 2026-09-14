@@ -29,3 +29,6 @@ Thumbs.db
 
 # Artefactos temporales de Playwright MCP
 .playwright-mcp/
+
+# Capturas de vista previa (locales)
+preview/
