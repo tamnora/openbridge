@@ -3,6 +3,8 @@
 var CFG = window.APP_CONFIG || {};
 var CSRF = CFG.csrf || '';
 var INITIAL_SESSION = typeof CFG.initialSession === 'number' ? CFG.initialSession : null;
+var IS_ADMIN = String(CFG.userRole || 'user') === 'admin';
+function isAdmin() { return IS_ADMIN; }
 
 var els = {
     body: document.body,
@@ -86,6 +88,12 @@ var els = {
     btnSave: document.getElementById('btnSave'),
     btnCancel: document.getElementById('btnCancel'),
 };
+
+// Marca visual del usuario actual (admin en color de acento).
+(function () {
+    var ub = document.getElementById('userBadge');
+    if (ub) ub.classList.toggle('admin', IS_ADMIN);
+})();
 
 var ONLINE_MAX_AGE_MS = 60000;
 var PROC_TIMEOUT_MS = 45000;
@@ -1264,7 +1272,7 @@ function renderHome(sessions) {
                     + '<div class="cmeta">' + busy + esc(s.model || 'sin modelo') + ' · ' + esc(s.agent || 'build') + '</div>'
                     + (s.preview ? '<div class="cpreview">' + prev + '</div>' : '')
                     + '</div>'
-                    + '<button type="button" class="kebab" aria-label="Opciones" title="Opciones">⋮</button>'
+                    + (isAdmin() ? '<button type="button" class="kebab" aria-label="Opciones" title="Opciones">⋮</button>' : '')
                     + '</div>';
             }
             html += '</div>';
@@ -1643,13 +1651,13 @@ function onMsgScroll() {
 // reemplaza solo ese nodo; lo demás no se toca.
 function msgSig(m) {
     return (m.status || '') + '|' + (m.text || '').length + '|' + (m.reasoning || '').length
-        + '|' + (m.canceled ? 1 : 0) + '|' + (m.agent || '') + '|' + (m.img ? m.img.length : 0);
+        + '|' + (m.canceled ? 1 : 0) + '|' + (m.agent || '') + '|' + (m.author || '') + '|' + (m.img ? m.img.length : 0);
 }
 
 function msgNodeHtml(m, chatQuery) {
     var cls = m.role === 'user' ? 'mine' : 'theirs';
     if (m.status === 'canceled') cls += ' canceled';
-    var who = m.role === 'user' ? '❯ vos' : '● Agente';
+    var who = m.role === 'user' ? '❯ ' + esc(m.author || 'vos') : '● Agente';
     if (m.agent === 'plan') cls += ' plan';
     var agentBadge = m.agent ? ' <span class="abadge ' + esc(m.agent) + '">' + esc(m.agent) + '</span>' : '';
     var stopBadge = m.canceled ? ' <span class="stopbadge">⏹ detenido</span>' : '';
@@ -3046,7 +3054,7 @@ async function loadChanges(folder) {
     }
     var list = '<div class="chg-files">';
     for (var i = 0; i < files.length; i++) {
-        var rev = files[i].status !== '??'
+        var rev = (isAdmin() && files[i].status !== '??')
             ? '<button type="button" class="chg-rev" data-path="' + esc(files[i].path) + '" title="Revertir este archivo" aria-label="Revertir este archivo">↩</button>'
             : '';
         list += '<div class="chg-row"><span class="chg-st ' + chgStatusClass(files[i].status) + '">' + esc(files[i].status) + '</span>'
@@ -3054,7 +3062,7 @@ async function loadChanges(folder) {
     }
     list += '</div>';
     var tracked = files.some(function (f) { return f.status !== '??'; });
-    var toolbar = tracked
+    var toolbar = (isAdmin() && tracked)
         ? '<div class="files-toolbar"><button type="button" class="linkbtn" id="chgRevert">↩ revertir cambios rastreados</button></div>'
         : '';
     els.viewChanges.innerHTML = changesHead(folder, status.branch) + toolbar + list + '<div class="placeholder">cargando diff…</div>';
@@ -3075,6 +3083,7 @@ async function loadChanges(folder) {
 // Sirve para un archivo puntual (boton de la fila) o para todos.
 if (els.viewChanges) {
     els.viewChanges.addEventListener('click', function (e) {
+        if (!isAdmin()) return;
         var folder = changesFolder();
         if (!folder) return;
         var one = e.target.closest('.chg-rev');
@@ -3397,21 +3406,26 @@ function renderPreviewView() {
     }
     els.viewPreview.innerHTML = '<div class="view-head"><h2>vista previa</h2>'
         + '<div class="view-sub">túneles del proyecto (TunnelMole, corren en tu PC)</div></div>'
-        + '<div class="tunnel-form">'
-        + '<input type="text" id="tunnelPort" inputmode="numeric" placeholder="puerto (ej: 8080)" value="' + esc(state.previewPort) + '" autocomplete="off">'
-        + '<button type="button" class="linkbtn" id="tunnelStart">abrir túnel</button>'
-        + '</div>'
+        + (isAdmin()
+            ? '<div class="tunnel-form">'
+                + '<input type="text" id="tunnelPort" inputmode="numeric" placeholder="puerto (ej: 8080)" value="' + esc(state.previewPort) + '" autocomplete="off">'
+                + '<button type="button" class="linkbtn" id="tunnelStart">abrir túnel</button>'
+                + '</div>'
+            : '')
         + '<div class="tnote-sec" style="margin:0 0 12px">los túneles son públicos en internet y viven mientras el puente esté corriendo · cerrálos al terminar</div>'
         + '<div id="tunnelList"></div>';
     var portInput = document.getElementById('tunnelPort');
-    portInput.addEventListener('input', function () {
-        state.previewPort = portInput.value.replace(/[^0-9]/g, '');
-        portInput.value = state.previewPort;
-    });
-    portInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); startTunnel(); }
-    });
-    document.getElementById('tunnelStart').addEventListener('click', startTunnel);
+    if (portInput) {
+        portInput.addEventListener('input', function () {
+            state.previewPort = portInput.value.replace(/[^0-9]/g, '');
+            portInput.value = state.previewPort;
+        });
+        portInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); startTunnel(); }
+        });
+        var tunStartBtn = document.getElementById('tunnelStart');
+        if (tunStartBtn) tunStartBtn.addEventListener('click', startTunnel);
+    }
     renderTunnels();
     refreshTunnels();
 }
@@ -3428,7 +3442,8 @@ function renderTunnels(busyMsg) {
             + '<div class="thead"><span class="dot"' + (ready ? '' : ' style="background:var(--muted)"') + '></span>'
             + '<b>puerto ' + esc(t.port) + '</b>'
             + '<span class="tnote">' + (ready ? 'activo' : 'levantando…') + '</span>'
-            + '<button type="button" class="linkbtn" data-tstop="' + esc(t.port) + '">cerrar túnel</button></div>'
+            + (isAdmin() ? '<button type="button" class="linkbtn" data-tstop="' + esc(t.port) + '">cerrar túnel</button>' : '')
+            + '</div>'
             + (t.https ? '<div class="turl"><a href="' + esc(t.https) + '" target="_blank" rel="noopener noreferrer">' + esc(t.https) + '</a>'
                 + '<button type="button" class="copybtn" data-tcopy="' + esc(t.https) + '" title="Copiar URL">⧉</button></div>' : '')
             + (t.http && t.http !== t.https ? '<div class="turl"><a href="' + esc(t.http) + '" target="_blank" rel="noopener noreferrer">' + esc(t.http) + '</a>'
@@ -3588,6 +3603,7 @@ function enterProcsView() {
 }
 
 function renderProcView(folder) {
+    var admin = isAdmin();
     els.viewProcs.innerHTML =
         '<div class="pp-head"><b>procesos</b><span class="pp-sub">' + esc(sessionProcLabel(folder)) + '</span>'
         + (state.currentId !== null ? '<button type="button" class="linkbtn pp-back" id="ppBack">← volver al chat</button>' : '')
@@ -3595,35 +3611,42 @@ function renderProcView(folder) {
         + '<div class="pp-status" id="procStatus"></div>'
         + '<div id="ppPortWarn"></div>'
         + '<pre id="procLog"><span class="pl-empty">sin salida todavía</span></pre>'
-        + '<div class="pp-tunnel">'
-        + '<div class="pp-tunhead">compartir por túnel (tunnelmole, corre en tu PC)</div>'
-        + '<div class="pp-tunform"><input type="text" id="ppTunPort" inputmode="numeric" placeholder="puerto (ej: 3000)" autocomplete="off">'
-        + '<button type="button" class="linkbtn" id="ppTunStart">abrir túnel</button></div>'
-        + '<div id="ppTunList"></div>'
-        + '</div>'
-        + '<div class="pp-chips" id="procChips"></div>'
-        + '<div class="pp-form"><input type="text" id="procCmdInput" placeholder="npm run dev · node server.js …" autocomplete="off">'
-        + '<button type="button" class="linkbtn" id="procStartBtn">iniciar</button></div>';
+        + (admin ? '<div class="pp-tunnel">'
+            + '<div class="pp-tunhead">compartir por túnel (tunnelmole, corre en tu PC)</div>'
+            + '<div class="pp-tunform"><input type="text" id="ppTunPort" inputmode="numeric" placeholder="puerto (ej: 3000)" autocomplete="off">'
+            + '<button type="button" class="linkbtn" id="ppTunStart">abrir túnel</button></div>'
+            + '<div id="ppTunList"></div>'
+            + '</div>' : '')
+        + (admin ? '<div class="pp-chips" id="procChips"></div>' : '')
+        + (admin ? '<div class="pp-form"><input type="text" id="procCmdInput" placeholder="npm run dev · node server.js …" autocomplete="off">'
+            + '<button type="button" class="linkbtn" id="procStartBtn">iniciar</button></div>' : '')
+        + (!admin ? '<div class="placeholder">solo un admin puede iniciar procesos o túneles.</div>' : '');
     var back = document.getElementById('ppBack');
     if (back) back.addEventListener('click', function () { showView('chat'); });
     var inp = document.getElementById('procCmdInput');
-    inp.value = procState.input || '';
-    inp.addEventListener('input', function () { procState.input = inp.value; });
-    inp.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); startSessionProc(); }
-    });
-    document.getElementById('procStartBtn').addEventListener('click', startSessionProc);
+    if (inp) {
+        inp.value = procState.input || '';
+        inp.addEventListener('input', function () { procState.input = inp.value; });
+        inp.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); startSessionProc(); }
+        });
+    }
+    var startBtn = document.getElementById('procStartBtn');
+    if (startBtn) startBtn.addEventListener('click', startSessionProc);
     var tunPort = document.getElementById('ppTunPort');
-    tunPort.value = procState.detectedPort || '';
-    tunPort.addEventListener('input', function () {
-        tunPort.value = tunPort.value.replace(/[^0-9]/g, '');
-        if (tunPort.value) state.previewPort = tunPort.value;
-    });
-    tunPort.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); panelStartTunnel(); }
-    });
-    document.getElementById('ppTunStart').addEventListener('click', panelStartTunnel);
-    buildProcChips();
+    if (tunPort) {
+        tunPort.value = procState.detectedPort || '';
+        tunPort.addEventListener('input', function () {
+            tunPort.value = tunPort.value.replace(/[^0-9]/g, '');
+            if (tunPort.value) state.previewPort = tunPort.value;
+        });
+        tunPort.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); panelStartTunnel(); }
+        });
+    }
+    var tunStart = document.getElementById('ppTunStart');
+    if (tunStart) tunStart.addEventListener('click', panelStartTunnel);
+    if (admin) buildProcChips();
     procLogBox = document.getElementById('procLog');
     renderProcStatus();
     renderPortWarn();
@@ -3908,7 +3931,8 @@ function renderProcTunnels(busyMsg) {
         var ready = !!(t.https || t.http);
         html += '<div class="tunnel"><div class="thead"><span class="dot"' + (ready ? '' : ' style="background:var(--muted)"') + '></span>'
             + '<b>puerto ' + esc(t.port) + '</b><span class="tnote">' + (ready ? 'activo' : 'levantando…') + '</span>'
-            + '<button type="button" class="linkbtn" data-ptstop="' + esc(t.port) + '">cerrar</button></div>'
+            + (isAdmin() ? '<button type="button" class="linkbtn" data-ptstop="' + esc(t.port) + '">cerrar</button>' : '')
+            + '</div>'
             + (t.https ? '<div class="turl"><a href="' + esc(t.https) + '" target="_blank" rel="noopener noreferrer">' + esc(t.https) + '</a>'
                 + '<button type="button" class="copybtn" data-ptcopy="' + esc(t.https) + '" title="Copiar URL">⧉</button></div>' : '')
             + (t.http && t.http !== t.https ? '<div class="turl"><a href="' + esc(t.http) + '" target="_blank" rel="noopener noreferrer">' + esc(t.http) + '</a>'

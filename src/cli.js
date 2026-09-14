@@ -183,6 +183,12 @@ async function cmdInit(argv) {
         console.log('Usa --force para reconfigurar (se pisan config.json/app.json).');
         return 0;
     }
+    if (paths.exists() && flags.force) {
+        const prev = config.readApp();
+        if ((prev.users || []).length > 1) {
+            console.log('aviso: --force deja un unico usuario admin; se pierden los demas usuarios.');
+        }
+    }
 
     if (stopRunningServer()) {
         console.log('Habia un server corriendo; lo detuve para reconfigurar (reinicialo con `openbridge server`).');
@@ -235,12 +241,12 @@ async function cmdInit(argv) {
         bridgeId: id,
         bridgeName: name,
     };
+    const adminName = flags.user || 'admin';
     const appCfg = {
         ...config.DEFAULT_APP,
         port,
         host: '127.0.0.1',
-        username: flags.user || 'admin',
-        password: config.hashPassword(password),
+        users: [config.makeUser(adminName, password, 'admin')],
         csrfSecret,
         bridgeToken,
         vapid,
@@ -259,7 +265,7 @@ async function cmdInit(argv) {
     console.log('  workspace : ' + workspace);
     console.log('  puente    : ' + id + ' (' + name + ')');
     console.log('  URL local : http://127.0.0.1:' + port + '/chat.php');
-    console.log('  usuario   : ' + appCfg.username);
+    console.log('  usuario   : ' + adminName);
     console.log('  contrasena: ' + password + (generated ? '  (generada)' : ''));
     console.log('  tunel     : ' + provider);
     console.log('  carpetas  : ' + folders.length + ' en folders.json');
@@ -693,21 +699,112 @@ async function cmdPasswd(argv) {
         return 1;
     }
     const app = config.readApp();
+    const name = String(flags.user || (app.users[0] && app.users[0].name) || 'admin');
+    const user = config.findUser(app, name);
+    if (!user) {
+        console.error('Usuario no encontrado: ' + name);
+        return 1;
+    }
     const interactive = !flags.yes && process.stdin.isTTY;
     let password = flags.password || '';
-    if (!password && interactive) password = await askHidden('Nueva contrasena (enter = generar): ');
+    if (!password && interactive) password = await askHidden('Nueva contrasena para "' + name + '" (enter = generar): ');
     let generated = false;
     if (!password) {
         password = config.randomToken(12);
         generated = true;
     }
     if (stopRunningServer()) console.log('Habia un server corriendo; lo detuve para aplicar el cambio.');
-    app.password = config.hashPassword(password);
+    user.password = config.hashPassword(password);
+    user.pv = (parseInt(user.pv, 10) || 1) + 1; // invalida las sesiones abiertas
     config.writeApp(app);
-    console.log('Contrasena actualizada para "' + app.username + '".');
+    console.log('Contrasena actualizada para "' + user.name + '".');
     console.log('  contrasena: ' + password + (generated ? '  (generada)' : ''));
     console.log('  volve a arrancar: openbridge server');
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// users: administracion de usuarios y roles (solo desde la CLI local)
+// ---------------------------------------------------------------------------
+async function cmdUsers(argv) {
+    const { flags, _ } = parseArgs(argv);
+    if (!paths.exists()) {
+        console.error('No hay configuracion en ' + paths.home() + '. Corre primero: openbridge init');
+        return 1;
+    }
+    const app = config.readApp();
+    const sub = String(_[0] || 'list').toLowerCase();
+    const name = _[1] || flags.name;
+
+    const persist = (msg) => {
+        if (stopRunningServer()) console.log('Habia un server corriendo; lo detuve para aplicar el cambio.');
+        config.writeApp(app);
+        console.log(msg);
+        console.log('  volve a arrancar: openbridge server');
+    };
+
+    if (sub === 'list' || sub === 'ls') {
+        const users = app.users || [];
+        if (!users.length) { console.log('(sin usuarios)'); return 0; }
+        for (const u of users) {
+            console.log((u.disabled ? 'x' : 'o') + '  ' + u.name.padEnd(16) + '[' + u.role + ']');
+        }
+        return 0;
+    }
+
+    if (sub === 'add') {
+        if (!config.userValidName(name)) { console.error('Nombre invalido (letras, numeros, . _ -; 1-32).'); return 1; }
+        if (config.findUser(app, name)) { console.error('Ya existe el usuario "' + name + '".'); return 1; }
+        let password = flags.password || '';
+        if (!password && process.stdin.isTTY) password = await askHidden('Contrasena para "' + name + '" (enter = generar): ');
+        let generated = false;
+        if (!password) { password = config.randomToken(12); generated = true; }
+        const role = config.USER_ROLES.includes(flags.role) ? flags.role : 'user';
+        app.users.push(config.makeUser(name, password, role));
+        persist('Usuario "' + name + '" agregado [' + role + '].');
+        console.log('  contrasena: ' + password + (generated ? '  (generada)' : ''));
+        return 0;
+    }
+
+    if (sub === 'remove' || sub === 'del' || sub === 'rm') {
+        const user = config.findUser(app, name);
+        if (!user) { console.error('Usuario no encontrado: ' + name); return 1; }
+        if (user.role === 'admin' && config.adminCount(app) <= 1) { console.error('No podes borrar al ultimo admin.'); return 1; }
+        app.users = app.users.filter((u) => u.id !== user.id);
+        persist('Usuario "' + user.name + '" borrado.');
+        return 0;
+    }
+
+    if (sub === 'passwd' || sub === 'password') {
+        if (!name) { console.error('Uso: openbridge users passwd <nombre> [--password <clave>]'); return 1; }
+        const extra = ['--user', name];
+        if (flags.password) extra.push('--password', String(flags.password));
+        return cmdPasswd(extra);
+    }
+
+    if (sub === 'role') {
+        const user = config.findUser(app, name);
+        if (!user) { console.error('Usuario no encontrado: ' + name); return 1; }
+        const role = String(_[2] || flags.role || '').toLowerCase();
+        if (!config.USER_ROLES.includes(role)) { console.error('Rol invalido (admin|user).'); return 1; }
+        if (user.role === 'admin' && role !== 'admin' && config.adminCount(app) <= 1) { console.error('No podes quitarle el admin al ultimo admin.'); return 1; }
+        user.role = role;
+        persist('Rol de "' + user.name + '" -> ' + role + '.');
+        return 0;
+    }
+
+    if (sub === 'disable' || sub === 'enable') {
+        const user = config.findUser(app, name);
+        if (!user) { console.error('Usuario no encontrado: ' + name); return 1; }
+        const disabled = sub === 'disable';
+        if (disabled && user.role === 'admin' && config.adminCount(app) <= 1) { console.error('No podes deshabilitar al ultimo admin.'); return 1; }
+        user.disabled = disabled;
+        persist('Usuario "' + user.name + '" ' + (disabled ? 'deshabilitado' : 'habilitado') + '.');
+        return 0;
+    }
+
+    console.error('Uso: openbridge users [list|add|remove|passwd|role|disable|enable] [nombre] [--role admin|user] [--password <clave>]');
+    return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -826,7 +923,8 @@ function usage() {
     console.log('');
     console.log('  init      Configura la casa (workspace, contrasena, tunel)');
     console.log('  server    Arranca en segundo plano (muestra el estado al levantar)');
-    console.log('  passwd    Cambia la contrasena de acceso (--password <clave>)');
+    console.log('  passwd    Cambia la contrasena de acceso (--user <nombre> --password <clave>)');
+    console.log('  users     Usuarios y roles (list|add|remove|passwd|role|disable|enable)');
     console.log('  stop      Detiene el server en segundo plano');
     console.log('  status    Estado del server, puente y chats');
     console.log('  qr        Muestra la URL (publica o local) como QR para el celular');
@@ -858,6 +956,7 @@ async function main(argv) {
     switch (cmd) {
         case 'init': return cmdInit(args.slice(1));
         case 'passwd': case 'password': return cmdPasswd(args.slice(1));
+        case 'users': case 'user': return cmdUsers(args.slice(1));
         case 'server': case 'start': return cmdServer(args.slice(1));
         case 'stop': return cmdStop();
         case 'status': return cmdStatus();

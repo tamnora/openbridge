@@ -62,8 +62,7 @@ test('API: ping publico, login y endpoints protegidos', async (t) => {
         port: 0,
         host: '127.0.0.1',
         baseUrl: 'http://127.0.0.1',
-        username: 'admin',
-        password: config.hashPassword('secreta'),
+        users: [config.makeUser('admin', 'secreta', 'admin'), config.makeUser('bob', 'clave2', 'user')],
         csrfSecret: 'csrf-secret',
         bridgeToken: 'bridge-token',
         vapid: { publicKey: '', privateKey: '' },
@@ -97,7 +96,7 @@ test('API: ping publico, login y endpoints protegidos', async (t) => {
     const csrf = /name="csrf" value="([^"]+)"/.exec(page.body)[1];
     assert.ok(csrf);
 
-    const form = 'csrf=' + encodeURIComponent(csrf) + '&password=secreta';
+    const form = 'csrf=' + encodeURIComponent(csrf) + '&username=admin&password=secreta';
     const login = await request(port, {
         method: 'POST', url: '/login.php',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(jar), 'Content-Length': Buffer.byteLength(form) },
@@ -129,4 +128,109 @@ test('API: ping publico, login y endpoints protegidos', async (t) => {
     const created = JSON.parse(create.body);
     assert.equal(created.ok, true);
     assert.equal(created.session.folder, projPath);
+});
+
+test('API: roles - user puede chatear pero no borrar ni correr procesos', async (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-api-role-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-api-role-ws-'));
+    paths.setHome(home);
+    paths.ensureDirs();
+    const projPath = path.join(root, 'proj');
+    fs.mkdirSync(projPath);
+
+    const app = {
+        port: 0,
+        host: '127.0.0.1',
+        baseUrl: 'http://127.0.0.1',
+        users: [config.makeUser('admin', 'secreta', 'admin'), config.makeUser('bob', 'clave2', 'user')],
+        csrfSecret: 'csrf-secret',
+        bridgeToken: 'bridge-token',
+        vapid: { publicKey: '', privateKey: '' },
+        tunnel: { provider: 'none', domain: '' },
+    };
+    config.writeApp(app);
+    await store.syncCatalog(
+        [{ name: 'proj', path: projPath }],
+        ['m/a'], root, true, ['build'], {}, [], {}, paths.catalogFile()
+    );
+
+    const server = web.createServer(app);
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    t.after(() => {
+        server.close();
+        fs.rmSync(home, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    async function loginAs(user, pass) {
+        const jar = {};
+        const page = await request(port, { url: '/login.php' });
+        addCookies(jar, page);
+        const csrf = /name="csrf" value="([^"]+)"/.exec(page.body)[1];
+        const form = 'csrf=' + encodeURIComponent(csrf) + '&username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass);
+        const login = await request(port, {
+            method: 'POST', url: '/login.php',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(jar), 'Content-Length': Buffer.byteLength(form) },
+            body: form,
+        });
+        assert.equal(login.status, 302);
+        addCookies(jar, login);
+        return { jar, csrf: decodeSession(jar.ob_session).c };
+    }
+
+    // Login invalido: mismo mensaje, sin filtrar si el usuario existe.
+    const pageBad = await request(port, { url: '/login.php' });
+    const jarBad = addCookies({}, pageBad);
+    const csrfBad = /name="csrf" value="([^"]+)"/.exec(pageBad.body)[1];
+    const badForm = 'csrf=' + encodeURIComponent(csrfBad) + '&username=nadie&password=x';
+    const bad = await request(port, {
+        method: 'POST', url: '/login.php',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(jarBad), 'Content-Length': Buffer.byteLength(badForm) },
+        body: badForm,
+    });
+    assert.match(bad.body, /Usuario o contrasena incorrectos/);
+
+    const bob = await loginAs('bob', 'clave2');
+
+    const create = await request(port, {
+        method: 'POST', url: '/api.php?action=session_create',
+        headers: { Cookie: cookieHeader(bob.jar), 'Content-Type': 'application/json', 'x-csrf': bob.csrf },
+        body: JSON.stringify({ folder: projPath, model: 'm/a', agent: 'build' }),
+    });
+    const created = JSON.parse(create.body);
+    assert.equal(created.ok, true);
+
+    // Enviar mensaje: permitido para user.
+    const send = await request(port, {
+        method: 'POST', url: '/api.php?action=send',
+        headers: { Cookie: cookieHeader(bob.jar), 'Content-Type': 'application/json', 'x-csrf': bob.csrf },
+        body: JSON.stringify({ session: created.session.id, text: 'hola' }),
+    });
+    assert.equal(JSON.parse(send.body).ok, true);
+
+    // Borrar sesion: solo admin.
+    const del = await request(port, {
+        method: 'POST', url: '/api.php?action=session_delete',
+        headers: { Cookie: cookieHeader(bob.jar), 'Content-Type': 'application/json', 'x-csrf': bob.csrf },
+        body: JSON.stringify({ id: created.session.id }),
+    });
+    assert.equal(del.status, 403);
+
+    // Correr un proceso: solo admin.
+    const proc = await request(port, {
+        method: 'POST', url: '/api.php?action=run_oc',
+        headers: { Cookie: cookieHeader(bob.jar), 'Content-Type': 'application/json', 'x-csrf': bob.csrf },
+        body: JSON.stringify({ cmd: 'proc_start', args: [projPath, 'npm run dev'] }),
+    });
+    assert.equal(proc.status, 403);
+
+    // Listar archivos (lectura): permitido.
+    const fsList = await request(port, {
+        method: 'POST', url: '/api.php?action=run_oc',
+        headers: { Cookie: cookieHeader(bob.jar), 'Content-Type': 'application/json', 'x-csrf': bob.csrf },
+        body: JSON.stringify({ cmd: 'fs_list', args: [''] }),
+    });
+    assert.equal(fsList.status, 200);
+    assert.equal(JSON.parse(fsList.body).ok, true);
 });

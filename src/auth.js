@@ -59,10 +59,10 @@ function serializeCookie(name, value, req, maxAge) {
 }
 
 // ---------------------------------------------------------------------------
-// Sesion
+// Sesion (ligada al id del usuario; el rol se lee siempre del server)
 // ---------------------------------------------------------------------------
-function makeSession(app, username, csrf, exp) {
-    const payload = b64url(JSON.stringify({ u: username, c: csrf, e: exp }));
+function makeSession(app, user, csrf, exp) {
+    const payload = b64url(JSON.stringify({ u: user.id, pv: parseInt(user.pv, 10) || 1, c: csrf, e: exp }));
     return payload + '.' + sign(payload, app.csrfSecret);
 }
 function readSession(app, req) {
@@ -76,8 +76,11 @@ function readSession(app, req) {
     if (!safeEqual(sign(payload, app.csrfSecret), sig)) return null;
     let data;
     try { data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch (e) { return null; }
-    if (!data || data.u !== app.username || typeof data.e !== 'number' || data.e < Math.floor(Date.now() / 1000)) return null;
-    return data;
+    if (!data || typeof data.e !== 'number' || data.e < Math.floor(Date.now() / 1000)) return null;
+    const user = config.userById(app, data.u);
+    if (!user || user.disabled) return null;
+    if ((parseInt(user.pv, 10) || 1) !== (parseInt(data.pv, 10) || 1)) return null;
+    return { id: user.id, name: user.name, role: user.role, u: user.id, c: data.c, e: data.e };
 }
 function currentCsrf(app, req) {
     const s = readSession(app, req);
@@ -86,6 +89,14 @@ function currentCsrf(app, req) {
 function requireLogin(app, req, res) {
     const s = readSession(app, req);
     if (!s) { json(res, 401, { ok: false, error: 'No autorizado' }); return null; }
+    return s;
+}
+// Exige que el usuario tenga uno de los roles indicados.
+function requireRole(app, req, res, roles) {
+    const s = readSession(app, req);
+    if (!s) { json(res, 401, { ok: false, error: 'No autorizado' }); return null; }
+    const allowed = Array.isArray(roles) ? roles : [roles];
+    if (!allowed.includes(s.role)) { json(res, 403, { ok: false, error: 'Permiso insuficiente' }); return null; }
     return s;
 }
 function requireCsrf(app, req, res) {
@@ -98,13 +109,13 @@ function requireCsrf(app, req, res) {
     return s;
 }
 
-function startSession(app, req, res, username) {
+function startSession(app, req, res, user) {
     const csrf = crypto.randomBytes(16).toString('hex');
     const exp = Math.floor(Date.now() / 1000) + REMEMBER_DAYS * 86400;
-    const token = makeSession(app, username, csrf, exp);
+    const token = makeSession(app, user, csrf, exp);
     res.setHeader('Set-Cookie', [
         serializeCookie(SESSION_COOKIE, token, req, REMEMBER_DAYS * 86400),
-        serializeCookie(REMEMBER_COOKIE, makeRemember(app, username), req, REMEMBER_DAYS * 86400),
+        serializeCookie(REMEMBER_COOKIE, makeRemember(app, user), req, REMEMBER_DAYS * 86400),
     ]);
     return csrf;
 }
@@ -115,9 +126,9 @@ function endSession(req, res) {
     ]);
 }
 
-function makeRemember(app, username) {
+function makeRemember(app, user) {
     const exp = Math.floor(Date.now() / 1000) + REMEMBER_DAYS * 86400;
-    const payload = username + '|' + exp;
+    const payload = user.id + '|' + exp + '|' + (parseInt(user.pv, 10) || 1);
     return b64url(payload) + '.' + sign(payload, app.csrfSecret);
 }
 // Re-autentica desde la cookie remember si la sesion se perdio.
@@ -133,10 +144,12 @@ function rememberAutoLogin(app, req, res) {
     let plain;
     try { plain = Buffer.from(payload, 'base64url').toString('utf8'); } catch (e) { return false; }
     const parts = plain.split('|');
-    if (parts.length !== 2) return false;
-    const [user, exp] = parts;
-    if (user !== app.username || !/^\d+$/.test(exp) || parseInt(exp, 10) < Math.floor(Date.now() / 1000)) return false;
+    if (parts.length !== 3) return false;
+    const [uid, exp, pv] = parts;
+    if (!/^\d+$/.test(exp) || parseInt(exp, 10) < Math.floor(Date.now() / 1000)) return false;
     if (!safeEqual(sign(payload, app.csrfSecret), sig)) return false;
+    const user = config.userById(app, uid);
+    if (!user || user.disabled || (parseInt(user.pv, 10) || 1) !== (parseInt(pv, 10) || 1)) return false;
     startSession(app, req, res, user);
     return true;
 }
@@ -149,10 +162,10 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_LOCK_MS = 15 * 60 * 1000;
 const loginAttempts = new Map();
 
-function clientKey(req) {
+function clientKey(req, user) {
     const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     const ip = xff || (req.socket && req.socket.remoteAddress) || 'desconocido';
-    return String(ip);
+    return String(ip) + '|' + String(user || '').trim().toLowerCase();
 }
 function pruneLoginAttempts(now) {
     for (const [key, st] of loginAttempts) {
@@ -160,25 +173,25 @@ function pruneLoginAttempts(now) {
     }
 }
 // Segundos restantes de bloqueo (0 = puede intentar).
-function loginLockRemaining(req) {
+function loginLockRemaining(req, user) {
     const now = Date.now();
     pruneLoginAttempts(now);
-    const st = loginAttempts.get(clientKey(req));
+    const st = loginAttempts.get(clientKey(req, user));
     if (!st || !st.lockUntil) return 0;
     const left = st.lockUntil - now;
     return left > 0 ? Math.ceil(left / 1000) : 0;
 }
-function loginRecordFailure(req) {
+function loginRecordFailure(req, user) {
     const now = Date.now();
-    const key = clientKey(req);
+    const key = clientKey(req, user);
     let st = loginAttempts.get(key);
     if (!st || (!st.lockUntil && now - st.first > LOGIN_WINDOW_MS)) st = { count: 0, first: now, lockUntil: 0 };
     st.count++;
     if (st.count >= LOGIN_MAX_ATTEMPTS) st.lockUntil = now + LOGIN_LOCK_MS;
     loginAttempts.set(key, st);
 }
-function loginClear(req) {
-    loginAttempts.delete(clientKey(req));
+function loginClear(req, user) {
+    loginAttempts.delete(clientKey(req, user));
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +218,7 @@ function json(res, code, data) {
 module.exports = {
     SESSION_COOKIE, REMEMBER_COOKIE,
     parseCookies, serializeCookie, isSecure,
-    makeSession, readSession, currentCsrf, requireLogin, requireCsrf,
+    makeSession, readSession, currentCsrf, requireLogin, requireRole, requireCsrf,
     startSession, endSession, rememberAutoLogin,
     loginLockRemaining, loginRecordFailure, loginClear,
     checkBridgeToken, safeEqual, json,

@@ -10,6 +10,8 @@ Guia para agentes que trabajen en este repo.
   `node bin/openbridge.js server --no-tunnel` (segundo plano; `--stream` para
   primer plano). Detener: `node bin/openbridge.js stop --dir <casa>`
 - Estado/logs: `node bin/openbridge.js status` / `logs --follow`
+- Usuarios: `node bin/openbridge.js users list|add|remove|passwd|role|disable|enable`
+  (roles `admin`/`user`; los cambios requieren reiniciar el server).
 - Release (solo el dueno): `npm run release -- <patch|minor|major|prerelease|X.Y.Z>`
   (ver mas abajo).
 

@@ -153,14 +153,41 @@ URL fija (ngrok con `--domain`).
 ## Seguridad
 
 - La app escucha **solo en `127.0.0.1`**; el túnel la expone a internet.
-- Login con contraseña (scrypt), cookie firmada `HttpOnly` + `SameSite=Lax`,
-  **CSRF** y **rate limit** (5 intentos / 15 min); token del puente autogenerado.
+- Login con **usuario y contraseña** (scrypt), cookie firmada `HttpOnly` +
+  `SameSite=Lax`, **CSRF** y **rate limit** (5 intentos / 15 min por IP+usuario);
+  token del puente autogenerado.
 - La cookie usa `Secure` cuando el pedido llega por HTTPS **desde loopback** (el
   túnel); no se confía en `X-Forwarded-Proto` de otros orígenes.
 - Respuestas con `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y
   `Referrer-Policy: no-referrer`.
 - El túnel es **público mientras corre**: detenelo (`openbridge stop`) cuando no
   lo uses y mantené la contraseña fuerte.
+
+## Usuarios y roles
+
+Cada persona entra con **usuario y contraseña**. Hay dos roles:
+
+- **admin**: todo (crear/borrar chats, revertir cambios, procesos, túneles y
+  administrar usuarios).
+- **user**: chat, archivos, cambios y búsqueda; no puede borrar chats, revertir
+  cambios ni correr procesos/túneles.
+
+Se administran desde la PC con la CLI (los cambios requieren reiniciar el server):
+
+```bash
+openbridge users list
+openbridge users add ana --role user --password <clave>
+openbridge users passwd ana
+openbridge users role ana admin
+openbridge users disable ana      # enable para reactivar
+openbridge users remove ana
+openbridge passwd --user admin    # cambia la clave de un usuario
+```
+
+`init --user <nombre>` crea el admin inicial. La contraseña se guarda con scrypt,
+y cambiar una clave **invalida las sesiones abiertas** de ese usuario. El último
+admin no se puede borrar, degradar ni deshabilitar. Cada mensaje guarda **quién
+lo envió** (se ve en el chat).
 
 ## Estado
 

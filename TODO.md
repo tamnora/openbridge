@@ -47,6 +47,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Vista **"cambios"** (git status + diff) del proyecto de la sesion, via el puente (funciona local y remoto).
 - [x] Boton **revertir** cambios rastreados desde la vista "cambios" (con confirmacion; no toca archivos nuevos).
 - [x] **Plantillas de prompts** guardadas en el navegador (insertar/borrar/guardar lo escrito).
+- [x] **Multiusuario** con roles `admin`/`user`: login usuario+contrasena, CLI `users`, gate server-side y **autor** en cada mensaje.
 
 ## 2. Túnel y URL estable (PWA / Web Push)
 

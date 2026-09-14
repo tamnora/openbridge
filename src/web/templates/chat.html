@@ -280,6 +280,11 @@
             text-align: center;
             border: 1px solid var(--border);
         }
+        #sidebar .footer .userbadge {
+            flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            color: var(--muted); font-size: 12px;
+        }
+        #sidebar .footer .userbadge.admin { color: var(--accent); }
         #scrim {
             display: none;
             position: fixed; inset: 0;
@@ -1204,7 +1209,10 @@
                 <span class="dot" id="bridgeDot"></span>
                 <span id="bridgeStatusText">puente: desconocido</span>
             </div>
-            <a class="logout" href="logout.php">salir</a>
+            <div class="row">
+                <span class="userbadge" id="userBadge" title="sesión actual">{{USER_NAME}}</span>
+                <a class="logout" href="logout.php">salir</a>
+            </div>
         </div>
         <div class="resizer" id="sbResizer" title="Arrastrá para ajustar · doble clic para restablecer"></div>
     </aside>
@@ -1344,7 +1352,9 @@
             themes: {{THEMES_JSON}},
             sseDisabled: {{SSE_DISABLED}},
             pushEnabled: {{PUSH_ENABLED}},
-            pushKey: "{{PUSH_KEY}}"
+            pushKey: "{{PUSH_KEY}}",
+            userName: "{{USER_NAME}}",
+            userRole: "{{USER_ROLE}}"
         };
     </script>
     <script src="app.js?v={{APPJS_VER}}" defer></script>

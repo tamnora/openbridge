@@ -18,6 +18,15 @@ const jsonfile = require('../store/jsonfile');
 
 const TEMPLATES = path.join(__dirname, 'templates');
 
+// Hash dummy para igualar el costo de scrypt cuando el usuario no existe (evita
+// filtrar si un nombre esta registrado por diferencias de tiempo).
+const DUMMY_HASH = { algo: 'scrypt', salt: '00000000000000000000000000000000', hash: '00'.repeat(64), keylen: 64 };
+
+// Acciones que solo puede hacer un admin.
+const ADMIN_ONLY_ACTIONS = new Set(['session_delete']);
+// Comandos del puente que mutan algo (procesos, tuneles, revertir).
+const OC_MUTATING = new Set(['proc_start', 'proc_stop', 'tunnel_start', 'tunnel_stop', 'git_checkout']);
+
 async function renderTpl(name, vars) {
     const tpl = await fsp.readFile(path.join(TEMPLATES, name), 'utf8');
     return tpl.replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (
@@ -59,6 +68,12 @@ async function loginCsrf(req, res) {
     return csrf;
 }
 
+// Ultimo usuario logueado (para prellenar el campo en el login).
+function lastUser(req) {
+    const cookies = auth.parseCookies(req.headers.cookie);
+    return String(cookies['ob_lastuser'] || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 32);
+}
+
 async function handleLoginPage({ app, req, res, query }) {
     if (auth.readSession(app, req)) {
         res.writeHead(302, { Location: 'chat.php' });
@@ -71,6 +86,7 @@ async function handleLoginPage({ app, req, res, query }) {
         THEMES_JSON: JSON.stringify(store.themesIndex()),
         ERROR_BLOCK: '',
         CSRF: csrf,
+        USER_PREFILL: lastUser(req),
     });
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
     res.end(html);
@@ -87,25 +103,34 @@ async function handleLogin({ app, req, res, query, form }) {
             THEMES_JSON: JSON.stringify(store.themesIndex()),
             ERROR_BLOCK: '<div class="error">\u26a0 ' + msg.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])) + '</div>',
             CSRF: csrf,
+            USER_PREFILL: lastUser(req) || String(form.username || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 32),
         });
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
         res.end(html);
     };
     if (!csrfOk) return renderError('Sesion expirada, recarga la pagina.');
-    const locked = auth.loginLockRemaining(req);
+    const username = String(form.username || '').trim();
+    const locked = auth.loginLockRemaining(req, username);
     if (locked > 0) {
         const mins = Math.max(1, Math.ceil(locked / 60));
         return renderError('Demasiados intentos fallidos. Proba de nuevo en ' + mins + ' min.');
     }
     const password = String(form.password || '');
-    if (config.verifyPassword(password, app.password)) {
-        auth.loginClear(req);
-        auth.startSession(app, req, res, app.username);
+    const user = config.findUser(app, username);
+    const passOk = config.verifyUserPassword(user, password);
+    if (!user) config.verifyPassword(password, DUMMY_HASH); // mismo costo si no existe
+    if (user && !user.disabled && passOk) {
+        auth.loginClear(req, username);
+        auth.startSession(app, req, res, user);
+        const prev = res.getHeader('Set-Cookie');
+        const jar = Array.isArray(prev) ? prev.slice() : (prev ? [prev] : []);
+        jar.push(auth.serializeCookie('ob_lastuser', user.name, req, 60 * 60 * 24 * 365));
+        res.setHeader('Set-Cookie', jar);
         res.writeHead(302, { Location: 'chat.php' });
         return res.end();
     }
-    auth.loginRecordFailure(req);
-    return renderError('Contrasena incorrecta.');
+    auth.loginRecordFailure(req, username);
+    return renderError('Usuario o contrasena incorrectos.');
 }
 
 async function handleChat({ app, req, res, query }) {
@@ -122,6 +147,8 @@ async function handleChat({ app, req, res, query }) {
     const html = await renderTpl('chat.html', {
         THEME: pickTheme(req, query, known),
         CSRF: session.c,
+        USER_NAME: session.name,
+        USER_ROLE: session.role,
         INITIAL_SESSION: initial > 0 ? String(initial) : 'null',
         THEMES_JSON: JSON.stringify(store.themesIndex()),
         SSE_DISABLED: 'false',
@@ -259,8 +286,9 @@ async function handleApi(ctx) {
             return ok({ ok: true, session: await store.getSession(id) });
         }
         case 'session_delete': {
-            if (!auth.requireLogin(app, req, res)) return;
-            if (!auth.requireCsrf(app, req, res)) return;
+            const s = auth.requireCsrf(app, req, res);
+            if (!s) return;
+            if (s.role !== 'admin') return ok({ ok: false, error: 'Permiso insuficiente' }, 403);
             const id = parseInt(body.id, 10) || 0;
             if (id <= 0) return ok({ ok: false, error: 'id invalido' }, 400);
             await store.deleteSession(id);
@@ -339,8 +367,8 @@ async function handleApi(ctx) {
             return ok({ ok: true, cancel: false });
         }
         case 'send': {
-            if (!auth.requireLogin(app, req, res)) return;
-            if (!auth.requireCsrf(app, req, res)) return;
+            const s = auth.requireCsrf(app, req, res);
+            if (!s) return;
             const sid = parseInt(body.session, 10) || 0;
             const sess = sid > 0 ? await store.getSession(sid) : null;
             if (!sess) return ok({ ok: false, error: 'Sesion no encontrada' }, 404);
@@ -352,7 +380,7 @@ async function handleApi(ctx) {
             }
             if (text === '' && img === '') return ok({ ok: false, error: 'Mensaje vacio' }, 400);
             if (Array.from(text).length > 10000) return ok({ ok: false, error: 'Mensaje demasiado largo' }, 400);
-            const extra = { agent: String(sess.agent || 'build') };
+            const extra = { agent: String(sess.agent || 'build'), author: s.name };
             if (img !== '') extra.img = img;
             const id = await store.addMessage(sid, 'user', text, 'pending', extra);
             if (store.sessionHasDefaultName(sess)) {
@@ -652,11 +680,13 @@ async function handleApi(ctx) {
             let aid = null;
             const found = await store.messagesUpdate(sid, (data) => {
                 let msgFound = false;
+                let author = '';
                 for (const msg of data.messages) {
                     if (parseInt(msg.id, 10) === userId) {
                         msg.status = 'done';
                         msg.answered_ts = store.nowIso();
                         delete msg.cancel_requested;
+                        if (typeof msg.author === 'string') author = msg.author;
                         msgFound = true;
                         break;
                     }
@@ -677,6 +707,7 @@ async function handleApi(ctx) {
                     if (reasoning !== '') m.reasoning = reasoning; else delete m.reasoning;
                     if (canceled) m.canceled = true; else delete m.canceled;
                     if (!m.agent) m.agent = store.messageAgentOf(data, userId, (sess && sess.agent) || '');
+                    if (author && !m.author) m.author = author;
                     delete m.draft_for;
                 } else {
                     aid = data.nextId;
@@ -684,6 +715,7 @@ async function handleApi(ctx) {
                     const nm = { id: aid, role: 'assistant', text, ts: store.nowIso(), status: 'done', agent: store.messageAgentOf(data, userId, (sess && sess.agent) || '') };
                     if (reasoning !== '') nm.reasoning = reasoning;
                     if (canceled) nm.canceled = true;
+                    if (author) nm.author = author;
                     data.messages.push(nm);
                 }
             });
@@ -723,13 +755,14 @@ async function handleApi(ctx) {
             return ok({ ok: true, path: rel, size, mtime: Math.floor(st.mtimeMs / 1000), kind: 'text', content });
         }
         case 'run_oc': {
-            if (!auth.requireLogin(app, req, res)) return;
-            if (!auth.requireCsrf(app, req, res)) return;
+            const s = auth.requireCsrf(app, req, res);
+            if (!s) return;
             const bridge = bodyBridge(req, query, body) || await webBridge(req, query);
             const file = paths.bridgeCatalogFile(bridge);
             const cmd = String(body.cmd || '').toLowerCase().replace(/[^a-z_]/g, '');
             const args = Array.isArray(body.args) ? body.args : [];
             if (!Object.prototype.hasOwnProperty.call(OC_ALLOWED, cmd)) return ok({ ok: false, error: 'Comando no permitido' }, 400);
+            if (OC_MUTATING.has(cmd) && s.role !== 'admin') return ok({ ok: false, error: 'Permiso insuficiente' }, 403);
             const spec = OC_ALLOWED[cmd];
             const cleanArgs = [];
             for (let i = 0; i < args.length; i++) {
