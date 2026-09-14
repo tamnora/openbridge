@@ -25,8 +25,9 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   `openbridge tunnel` y `init --domain`.
 - QR propio (`src/qr.js`, sin dependencias): en `init`/`status`/`server` y `openbridge qr`.
 - `bridge.js` parametrizado para la casa portable, con overrides por entorno.
-- Tests (`node --test`): **28/28** (smoke, auth/roles, API, QR, release,
-  `safeJoinWorkspace`, migración). CI Windows/Linux/macOS.
+- Tests (`node --test`): **33/33** (smoke, auth/roles, API, QR, release, bridge
+  end-to-end con opencode mockeado, CLI, `safeJoinWorkspace`, migración).
+  CI Windows/Linux/macOS.
 - Release privado (`scripts/release.mjs`): guard de dueño, semver/prerelease y dist-tags.
 - Web: chat con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
   tokens/contexto y **costo**, archivos, **cambios** (git status/diff) con **revertir**,
@@ -77,14 +78,14 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] **`stop` robusto**: mata el árbol completo (Windows `taskkill /T`; POSIX grupo detached).
 - [x] **`passwd`**: cambia la contraseña y detiene el server en ejecución.
 - [x] `init --force`/`passwd` detienen el server antes de reescribir la config.
-- [ ] `openbridge update` (auto-actualización) — opcional.
+- [x] `openbridge update` (auto-actualización): compara con npm y con `--yes` corre `npm i -g`.
 
 ## 4. Multi-PC (hub + remotas)
 
 - [x] `openbridge bridge` con flags **`--api`, `--token`, `--id`, `--name`**.
 - [x] Documentar el flujo hub/remoto en README con un ejemplo concreto.
 - [ ] Probar el selector PC1/PC2 de la web con dos puentes reales contra el mismo hub.
-- [ ] Evaluar comando `openbridge join <url>` para vincular una PC nueva al hub.
+- [x] `openbridge join <url>`: vincula una PC nueva al hub (persiste `apiUrl`/`apiToken`/`bridgeId` y arranca el puente).
 
 ## 5. Datos / migración
 
@@ -109,8 +110,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Tests de **roles** (`user` recibe 403 al borrar/correr) y de **migración** del admin legado.
 - [x] Tests del generador **QR** (ida y vuelta) y de la lógica de **release**.
 - [x] Test de seguridad de `safeJoinWorkspace`.
-- [ ] Test end-to-end con opencode (mockeando el CLI).
-- [ ] `npm run lint` (a definir; hoy no hay linter).
+- [x] Test end-to-end con opencode (mockeando el CLI): `test/bridge.test.js` corre el puente real contra un hosting y un `opencode` simulados.
+- [x] `npm run lint` (`scripts/lint.mjs`: `node --check` sobre todo el JS; corre en CI).
 
 ## 8. Empaquetado / publicación
 
@@ -121,16 +122,16 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Proceso de **release privado** (`scripts/release.mjs`): bump semver/prerelease,
       changelog, commit, tag, push a GitHub y publish con dist-tag; guard de dueno.
 - [x] CI (GitHub Actions): `npm test` en Windows/Linux/macOS.
-- [x] `CHANGELOG.md` (falta guía de contribución).
+- [x] `CHANGELOG.md` y guía de contribución (`CONTRIBUTING.md`).
 
 ## 9. Deuda técnica / detalles
 
-- [ ] Branding: quedan claves `ocx_*`/`OPENCONEX_HOME` y el alias `openconex` (funcional; unificar a `ob_`/`openbridge`).
+- [x] Branding: claves internas `ocx_*` renombradas a `ob_*` con migración automática (localStorage y cookie de tema). Se mantienen como compatibilidad el env `OPENCONEX_HOME` y el bin `openconex` (deprecados).
 - [x] Revisar `web/assets/sw.js` (nombre de caché, fallback offline) y `manifest.webmanifest` (id/lang).
-- [ ] Decidir si se mantiene el comando `mode` (local/remoto/dual) o se elimina.
+- [x] Decisión sobre el comando `mode`: se mantiene como config del puente (`mode.txt`/`config.mode` con `local|remoto|dual`), sin comando CLI propio.
 - [x] `docs/ARCHITECTURE.md` con arquitectura y decisiones.
 - [x] Guardar todo en `<base>/.openbridge/` con migración automática del layout viejo.
-- [ ] Revisar manejo de errores del server (500) y logs.
+- [x] Revisar manejo de errores del server (500) y logs: `server.js` responde 500 genérico y registra el stack; las respuestas >=400 se loguean.
 - [ ] Unificar/limpiar comentarios y textos en español.
 
 ---

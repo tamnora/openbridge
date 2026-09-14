@@ -600,8 +600,8 @@ async function cmdLogs(argv) {
 // ---------------------------------------------------------------------------
 async function cmdBridge(argv) {
     const { flags } = parseArgs(argv);
-    if (!paths.exists()) {
-        console.error('No hay configuracion en ' + paths.home() + '. Corre primero: openbridge init');
+    if (!fs.existsSync(paths.configPath())) {
+        console.error('No hay configuracion de puente en ' + paths.home() + '. Corre primero: openbridge join <url> o openbridge init');
         return 1;
     }
     // Permite apuntar a otro hub sin editar config.json a mano.
@@ -618,6 +618,41 @@ async function cmdBridge(argv) {
         windowsHide: true,
     });
     return new Promise((resolve) => child.on('exit', (code) => resolve(code || 0)));
+}
+
+// ---------------------------------------------------------------------------
+// join: esta PC se suma como puente de un hub (otra PC con `openbridge server`).
+// Guarda la URL/token/identidad en config.json y arranca el puente.
+// ---------------------------------------------------------------------------
+async function cmdJoin(argv) {
+    const { flags, _ } = parseArgs(argv);
+    const url = String(_[0] || flags.api || '').trim();
+    if (!url || !/^https?:\/\//i.test(url)) {
+        console.error('Uso: openbridge join <url-del-hub> [--token <t>] [--id <pc>] [--name "<nombre>"] [--no-start]');
+        console.error('Ej.:  openbridge join https://mi-pc.trycloudflare.com --token <t> --id pc2 --name "PC oficina"');
+        return 1;
+    }
+    paths.ensureDirs();
+    const cfg = config.readBridge();
+    cfg.apiUrl = url.replace(/\/+$/, '');
+    if (typeof flags.token === 'string') cfg.apiToken = flags.token;
+    if (typeof flags.id === 'string') cfg.bridgeId = sanitizeId(flags.id);
+    else if (!cfg.bridgeId) cfg.bridgeId = sanitizeId(os.hostname());
+    if (typeof flags.name === 'string' && flags.name.trim()) cfg.bridgeName = flags.name.trim().slice(0, 40);
+    else if (!cfg.bridgeName) cfg.bridgeName = cfg.bridgeId;
+    config.writeBridge(cfg);
+
+    console.log('Puente vinculado al hub: ' + cfg.apiUrl);
+    console.log('  id     : ' + cfg.bridgeId);
+    console.log('  nombre : ' + cfg.bridgeName);
+    if (!cfg.apiToken) console.log('aviso: sin token (--token). Solo sirve si el hub no exige token del puente.');
+    if (flags['no-start']) {
+        console.log('Arrancalo cuando quieras con: openbridge bridge');
+        return 0;
+    }
+    console.log('');
+    console.log('Arrancando el puente (Ctrl+C para salir)...');
+    return cmdBridge([]);
 }
 
 // ---------------------------------------------------------------------------
@@ -916,6 +951,53 @@ async function cmdDoctor() {
 }
 
 // ---------------------------------------------------------------------------
+// update: compara con npm y, con --yes, actualiza la instalacion global.
+// ---------------------------------------------------------------------------
+function npmRun(args) {
+    return spawnSync('npm', args, { encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true });
+}
+
+async function cmdUpdate(argv) {
+    const { flags } = parseArgs(argv);
+    const tag = (typeof flags.tag === 'string' && flags.tag) ? flags.tag : 'latest';
+    const pkg = '@danieltmn/openbridge';
+    const spec = pkg + '@' + tag;
+    console.log('Version actual: ' + VERSION);
+
+    const view = npmRun(['view', spec, 'version', '--json']);
+    let latest = '';
+    try { latest = String(JSON.parse(view.stdout)).trim(); } catch (e) { latest = String(view.stdout || '').trim().replace(/"/g, ''); }
+    if (view.status !== 0 || !/^\d+\.\d+\.\d+/.test(latest)) {
+        console.error('No se pudo consultar npm (' + tag + '): ' + ((view.stderr || '').trim() || 'revisa tu conexion'));
+        return 1;
+    }
+    console.log('Disponible (' + tag + '): ' + latest);
+    if (latest === VERSION) {
+        console.log('Ya estas en la ultima version.');
+        return 0;
+    }
+    if (flags.check) {
+        console.log('Hay una version nueva. Corre: openbridge update --yes');
+        return 0;
+    }
+    if (!flags.yes && !flags.y) {
+        console.log('');
+        console.log('Para actualizar ahora:');
+        console.log('  openbridge update --yes        (o)  npm i -g ' + spec);
+        return 0;
+    }
+
+    console.log('Actualizando a ' + spec + '...');
+    const r = spawnSync('npm', ['i', '-g', spec], { stdio: 'inherit', shell: process.platform === 'win32', windowsHide: true });
+    if (r.status !== 0) {
+        console.error('La actualizacion fallo. Proba a mano: npm i -g ' + spec);
+        return 1;
+    }
+    console.log('Listo. Reinicia el server para usar la version nueva: openbridge stop && openbridge server');
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 function usage() {
     console.log('OpenBridge ' + VERSION + ' — tu opencode en el celular, sin hosting');
     console.log('');
@@ -931,10 +1013,12 @@ function usage() {
     console.log('  tunnel    Muestra o cambia el proveedor de tunel (tunnelmole|ngrok|cloudflare|none) [--domain]');
     console.log('  logs      Ultimas lineas de los logs (--follow --server --bridge)');
     console.log('  bridge    Corre solo el puente (--api --token --id --name)');
+    console.log('  join      Vincula esta PC como puente de un hub (<url> --token --id --name)');
     console.log('  import    Trae data/ de OpenConex (<data-dir> [--force])');
     console.log('  reset     Borra todos los chats/datos (--session <id> --yes)');
     console.log('  autostart Instala/quita el arranque automatico (install|remove)');
     console.log('  doctor    Verifica Node, opencode, configuracion y puerto');
+    console.log('  update    Busca una version nueva en npm (--yes para actualizar)');
     console.log('');
     console.log('Opciones comunes: --dir <ruta>  (casa portable; default: directorio actual)');
     console.log('init: --workspace --name --id --port --password --tunnel --domain --yes --force');
@@ -964,10 +1048,12 @@ async function main(argv) {
         case 'tunnel': return cmdTunnel(args.slice(1));
         case 'logs': return cmdLogs(args.slice(1));
         case 'bridge': return cmdBridge(args.slice(1));
+        case 'join': return cmdJoin(args.slice(1));
         case 'import': return cmdImport(args.slice(1));
         case 'reset': return cmdReset(args.slice(1));
         case 'autostart': return cmdAutostart(args.slice(1));
         case 'doctor': return cmdDoctor();
+        case 'update': return cmdUpdate(args.slice(1));
         case 'version': case '-v': case '--version': console.log(VERSION); return 0;
         case 'help': case '-h': case '--help': usage(); return 0;
         default:

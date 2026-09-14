@@ -37,7 +37,7 @@ async function renderTpl(name, vars) {
 function pickTheme(req, query, known) {
     const cookies = auth.parseCookies(req.headers.cookie);
     const fromUrl = String(query.get('theme') || '').replace(/[^a-z-]/g, '').toLowerCase();
-    const fromCookie = String(cookies['ocx_theme'] || '').replace(/[^a-z-]/g, '').toLowerCase();
+    const fromCookie = String(cookies['ob_theme'] || cookies['ocx_theme'] || '').replace(/[^a-z-]/g, '').toLowerCase();
     if (fromUrl && known.includes(fromUrl)) return fromUrl;
     if (fromCookie && known.includes(fromCookie)) return fromCookie;
     return 'terminal';

@@ -89,12 +89,12 @@
         (function () {
             var knownThemes = {{THEMES_JSON}};
             var params = new URLSearchParams(location.search);
-            var cookie = document.cookie.match(/(?:^|;\s*)ocx_theme=([^;]+)/);
+            var cookie = document.cookie.match(/(?:^|;\s*)ob_theme=([^;]+)/) || document.cookie.match(/(?:^|;\s*)ocx_theme=([^;]+)/);
             var saved = (params.get('theme') || (cookie && decodeURIComponent(cookie[1])) || document.body.getAttribute('data-theme') || 'terminal');
             if (knownThemes.indexOf(saved) === -1) saved = 'terminal';
             document.body.setAttribute('data-theme', saved);
             document.getElementById('themeStylesheet').setAttribute('href', 'themes/' + saved + '.css');
-            document.cookie = 'ocx_theme=' + encodeURIComponent(saved) + ';path=/;max-age=' + (60 * 60 * 24 * 365) + ';SameSite=Lax';
+            document.cookie = 'ob_theme=' + encodeURIComponent(saved) + ';path=/;max-age=' + (60 * 60 * 24 * 365) + ';SameSite=Lax';
             window.addEventListener('load', function () {
                 var bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
                 if (bg) document.getElementById('themeColor').setAttribute('content', bg);

@@ -1,5 +1,21 @@
 "use strict";
 
+// Migracion de claves viejas `ocx_*` a `ob_*` (una sola vez, antes de leer nada).
+(function () {
+    try {
+        var keys = [];
+        for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k && k.indexOf('ocx_') === 0) keys.push(k);
+        }
+        for (var j = 0; j < keys.length; j++) {
+            var nk = 'ob_' + keys[j].slice(4);
+            if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(keys[j]));
+            localStorage.removeItem(keys[j]);
+        }
+    } catch (e) { /* almacenamiento no disponible */ }
+})();
+
 var CFG = window.APP_CONFIG || {};
 var CSRF = CFG.csrf || '';
 var INITIAL_SESSION = typeof CFG.initialSession === 'number' ? CFG.initialSession : null;
@@ -167,7 +183,7 @@ var state = {
 
 // Puente activo y lista conocida se restauran antes de pintar (caché local).
 state.activeBridge = loadStoredBridge();
-var _cachedBridges = lsGet('ocx_bridges');
+var _cachedBridges = lsGet('ob_bridges');
 if (Array.isArray(_cachedBridges) && _cachedBridges.length) state.bridges = _cachedBridges;
 
 // Estado del panel "procesos" de la sesión activa (dev servers en la PC).
@@ -271,8 +287,8 @@ function applyTheme(slug, opts) {
     } catch (e) {}
     if (!opts || opts.persist !== false) {
         try {
-            document.cookie = 'ocx_theme=' + encodeURIComponent(s) + ';path=/;max-age=' + (60 * 60 * 24 * 365) + ';SameSite=Lax';
-            localStorage.setItem('ocx_theme', s);
+            document.cookie = 'ob_theme=' + encodeURIComponent(s) + ';path=/;max-age=' + (60 * 60 * 24 * 365) + ';SameSite=Lax';
+            localStorage.setItem('ob_theme', s);
         } catch (e) {}
     }
     renderSkinPanel();
@@ -329,16 +345,16 @@ function activeBridgeInfo() { return bridgeInfo(activeBridgeId()); }
 // El catálogo/estado se guardan por puente activo (cada PC tiene el suyo).
 function catalogKey() {
     var id = activeBridgeId();
-    return id ? 'ocx_catalog_' + id : 'ocx_catalog';
+    return id ? 'ob_catalog_' + id : 'ob_catalog';
 }
 function catalogVerKey() {
     return catalogKey() + '_ver';
 }
 function loadStoredBridge() {
-    try { return localStorage.getItem('ocx_bridge') || ''; } catch (e) { return ''; }
+    try { return localStorage.getItem('ob_bridge') || ''; } catch (e) { return ''; }
 }
 function storeBridge(id) {
-    try { localStorage.setItem('ocx_bridge', id || ''); } catch (e) {}
+    try { localStorage.setItem('ob_bridge', id || ''); } catch (e) {}
 }
 
 // Sesiones visibles: solo las del puente activo cuando hay varios puentes.
@@ -385,7 +401,7 @@ function renderBridgeBar() {
 // applyBootPayload / switchActiveBridge para no mezclar catálogos).
 function applyBridges(list) {
     state.bridges = Array.isArray(list) ? list : [];
-    try { localStorage.setItem('ocx_bridges', JSON.stringify(state.bridges)); } catch (e) {}
+    try { localStorage.setItem('ob_bridges', JSON.stringify(state.bridges)); } catch (e) {}
     renderBridgeBar();
 }
 
@@ -446,7 +462,7 @@ function applyBootPayload(data) {
         state.catalog.last_online_ts = data.online_ts;
     }
     var sessions = data.sessions || [];
-    lsSet('ocx_sessions', sessions);
+    lsSet('ob_sessions', sessions);
     renderHome(sessions);
     applyOnlineUI();
 }
@@ -718,13 +734,13 @@ function projectLabel(folderPath) {
 function loadOpenProjects() {
     if (state.openProjects) return state.openProjects;
     var stored = null;
-    try { stored = JSON.parse(localStorage.getItem('ocx_openProjects') || 'null'); } catch (e) {}
+    try { stored = JSON.parse(localStorage.getItem('ob_openProjects') || 'null'); } catch (e) {}
     state.openProjects = (stored && typeof stored === 'object') ? stored : null;
     return state.openProjects;
 }
 
 function saveOpenProjects() {
-    try { localStorage.setItem('ocx_openProjects', JSON.stringify(state.openProjects || {})); } catch (e) {}
+    try { localStorage.setItem('ob_openProjects', JSON.stringify(state.openProjects || {})); } catch (e) {}
 }
 
 function isProjectOpen(folderPath, sessions) {
@@ -1131,21 +1147,21 @@ if (composeCloseEl) composeCloseEl.addEventListener('click', composeCloseSheet);
 // Sidebar: logo → inicio, ajuste de ancho y ocultar (desktop) / cerrar drawer (móvil)
 // ---------------------------------------------------------------------------
 function sbHidden() {
-    try { return localStorage.getItem('ocx_sbHidden') === '1'; } catch (e) { return false; }
+    try { return localStorage.getItem('ob_sbHidden') === '1'; } catch (e) { return false; }
 }
 function setSbHidden(hidden) {
-    try { localStorage.setItem('ocx_sbHidden', hidden ? '1' : '0'); } catch (e) {}
+    try { localStorage.setItem('ob_sbHidden', hidden ? '1' : '0'); } catch (e) {}
     document.body.classList.toggle('sb-hide', hidden);
 }
 function sbWidth() {
     try {
-        var w = parseInt(localStorage.getItem('ocx_sbW'), 10);
+        var w = parseInt(localStorage.getItem('ob_sbW'), 10);
         if (w >= 200 && w <= 480) return w;
     } catch (e) {}
     return 264;
 }
 function setSbWidth(w) {
-    try { localStorage.setItem('ocx_sbW', String(w)); } catch (e) {}
+    try { localStorage.setItem('ob_sbW', String(w)); } catch (e) {}
     document.documentElement.style.setProperty('--sb-w', w + 'px');
 }
 
@@ -1321,7 +1337,7 @@ function renderHome(sessions) {
 async function loadSessions() {
     var data = await api('api.php?action=sessions');
     if (data.ok) {
-        lsSet('ocx_sessions', data.sessions || []);
+        lsSet('ob_sessions', data.sessions || []);
         renderHome(data.sessions || []);
     } else if (!state.sessions.length) {
         els.home.innerHTML = '<div class="empty">Sin conexión</div>';
@@ -3402,7 +3418,7 @@ function validPort(p) {
 
 function renderPreviewView() {
     if (!state.previewPort) {
-        try { state.previewPort = localStorage.getItem('ocx_lastPort') || ''; } catch (e) {}
+        try { state.previewPort = localStorage.getItem('ob_lastPort') || ''; } catch (e) {}
     }
     els.viewPreview.innerHTML = '<div class="view-head"><h2>vista previa</h2>'
         + '<div class="view-sub">túneles del proyecto (TunnelMole, corren en tu PC)</div></div>'
@@ -3474,7 +3490,7 @@ function renderTunnels(busyMsg) {
 async function startTunnel() {
     var port = validPort(state.previewPort);
     if (!port) { toast('escribí un puerto válido (1–65535)', 'error'); return; }
-    try { localStorage.setItem('ocx_lastPort', String(port)); } catch (e) {}
+    try { localStorage.setItem('ob_lastPort', String(port)); } catch (e) {}
     var already = (state.tunnels || []).some(function (t) { return parseInt(t.port, 10) === port && (t.https || t.http); });
     if (already) { toast('ya hay un túnel para el puerto ' + port, 'ok'); return; }
     renderTunnels('levantando túnel para el puerto ' + port + '… (la primera vez puede tardar si descarga tunnelmole)');
@@ -3965,7 +3981,7 @@ async function panelStartTunnel() {
     var inp = document.getElementById('ppTunPort');
     var port = validPort(inp ? inp.value : '');
     if (!port) { toast('escribí un puerto válido (1–65535)', 'error'); return; }
-    try { localStorage.setItem('ocx_lastPort', String(port)); } catch (e) {}
+    try { localStorage.setItem('ob_lastPort', String(port)); } catch (e) {}
     var already = (state.tunnels || []).some(function (t) { return parseInt(t.port, 10) === port; });
     if (already) { toast('ya hay un túnel para el puerto ' + port, 'ok'); return; }
     renderProcTunnels('levantando túnel para el puerto ' + port + '… (la primera vez descarga tunnelmole)');
@@ -4139,7 +4155,7 @@ function refreshActiveView(reason) {
 async function boot() {
     var cachedCat = lsGet(catalogKey());
     var cachedVer = lsGet(catalogVerKey());
-    var cachedSessions = lsGet('ocx_sessions');
+    var cachedSessions = lsGet('ob_sessions');
     var painted = false;
     if (cachedCat && typeof cachedCat === 'object') {
         state.catalog = cachedCat;

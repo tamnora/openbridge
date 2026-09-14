@@ -90,10 +90,12 @@ iniciar sesión** una vez; los chats, carpetas, túnel y push se conservan.
 | `openbridge tunnel` | Muestra o cambia el proveedor de túnel y su dominio fijo (`--domain`) |
 | `openbridge logs` | Logs (`--follow`, `--server`, `--bridge`) |
 | `openbridge bridge` | Corre **solo** el puente (`--api --token --id --name`) |
+| `openbridge join` | Vincula esta PC como puente de un hub (`<url> --token --id --name`) |
 | `openbridge import` | Trae `data/` de OpenConex (`<data-dir> [--force]`) |
 | `openbridge reset` | Borra chats/datos (`--session <id>`, `--yes`) |
 | `openbridge autostart` | Arranque automático (`install`/`remove`) |
 | `openbridge doctor` | Verifica Node, opencode, configuración y puerto |
+| `openbridge update` | Busca una versión nueva en npm (`--yes` para actualizar) |
 
 ## Casa portable
 
@@ -130,10 +132,11 @@ Ejemplo concreto:
 2. Copiá el **token del puente** del hub: `.openbridge/app.json` → `bridgeToken`.
 3. En la **PC 2** (remota):
    ```bash
-   openbridge init --tunnel none        # no necesita túnel propio
-   openbridge bridge --api https://tu-url-publica/api.php \
-     --token <bridgeToken> --id pc2 --name "PC 2"
+   openbridge join https://tu-url-publica --token <bridgeToken> --id pc2 --name "PC 2"
+   # guarda la config y arranca el puente; con --no-start solo guarda
    ```
+   (equivale a `openbridge bridge --api … --token … --id … --name …`, pero
+   persiste la config para no repetir flags)
 4. Abrí la URL del hub desde el celular: en el sidebar aparecen **PC 1** y
    **PC 2** para alternar.
 

@@ -19,7 +19,7 @@ el estado); `--stream` lo deja en primer plano.
 | Ruta | Responsabilidad |
 |---|---|
 | `bin/openbridge.js` | Entrada CLI + guard de Node. |
-| `src/cli.js` | Comandos (`init`, `passwd`, `users`, `server`, `stop`, `status`, `qr`, `tunnel`, `logs`, `bridge`, `import`, `reset`, `autostart`, `doctor`). |
+| `src/cli.js` | Comandos (`init`, `passwd`, `users`, `server`, `stop`, `status`, `qr`, `tunnel`, `logs`, `bridge`, `join`, `import`, `reset`, `autostart`, `doctor`, `update`). |
 | `src/paths.js` | Casa portable: ubicacion de `config.json`, `app.json`, `data/`, `logs/`. |
 | `src/config.js` | Lectura/escritura de config, hash scrypt, **usuarios/roles**, VAPID. |
 | `src/auth.js` | Cookie de sesion firmada, CSRF, remember-me, **roles**, rate limit, token del puente. |
@@ -65,9 +65,13 @@ OpenBridge. La CLI pasa la **base** (`--dir`/cwd) al puente via
 
 ## Multi-PC
 
-El hub corre la app; cada PC corre `openbridge bridge` apuntando al hub
-(`apiUrl` + `apiToken` + `bridgeId`). El catalogo se guarda por PC
-(`data/catalog-<id>.json`) y el sidebar permite elegir que PC usar.
+El hub corre la app; cada PC corre `openbridge bridge` (o `openbridge join <url>`,
+que persiste `apiUrl` + `apiToken` + `bridgeId`) apuntando al hub. El catalogo se
+guarda por PC (`data/catalog-<id>.json`) y el sidebar permite elegir que PC usar.
+
+`config.command` es el CLI a ejecutar (default `opencode`). Si apunta a un script
+de Node (`.js`/`.mjs`/`.cjs`) el puente lo corre con el `node` actual, lo que
+permite wrappers propios y las pruebas con un opencode simulado.
 
 ## Usuarios y roles
 

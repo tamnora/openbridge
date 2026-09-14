@@ -412,6 +412,21 @@ function parseShimExe(shimPath, shimDir) {
     return exe;
 }
 
+// Si `command` apunta a un script de Node (.js/.mjs/.cjs) lo ejecutamos con el
+// node actual. Permite wrappers propios (p. ej. un runner que filtra logs) y
+// que las pruebas usen un opencode simulado sin depender del PATH.
+function isNodeScriptCommand(cmd) {
+    return /\.(c|m)?js$/i.test(String(cmd || '').trim());
+}
+
+function commandSpec(args) {
+    const cmd = config.command;
+    if (isNodeScriptCommand(cmd)) {
+        return { cmd: process.execPath, argv: [path.resolve(cmd)].concat(args) };
+    }
+    return { cmd: resolveCommand(), argv: args };
+}
+
 // ---------------------------------------------------------------------------
 // Ejecutar comandos auxiliares de opencode
 // ---------------------------------------------------------------------------
@@ -457,9 +472,9 @@ function runCmd(bin, args, opts) {
 
 function runCli(args, opts) {
     return new Promise((resolve) => {
-        const cmd = resolveCommand();
+        const spec = commandSpec(args);
         const timeoutMs = Math.max((opts && opts.timeout) || 0, 0);
-        const child = spawn(cmd, args, {
+        const child = spawn(spec.cmd, spec.argv, {
             cwd: (opts && opts.cwd) || undefined,
             stdio: ['pipe', 'pipe', 'pipe'],
             env: process.env,
@@ -511,9 +526,9 @@ function runCli(args, opts) {
 // Resolución: { ok, code, text, reasoning, killed, canceled, sessionID, errorText }.
 function streamCli(args, opts, onPartial) {
     return new Promise((resolve) => {
-        const cmd = resolveCommand();
+        const spec = commandSpec(args);
         const timeoutMs = Math.max((opts && opts.timeout) || 0, 0);
-        const child = spawn(cmd, args, {
+        const child = spawn(spec.cmd, spec.argv, {
             cwd: (opts && opts.cwd) || undefined,
             stdio: ['pipe', 'pipe', 'pipe'],
             env: process.env,
@@ -834,7 +849,7 @@ async function runOpencode(msg, onPartial) {
         try {
             const mime = msg.img.slice(5, msg.img.indexOf(';'));
             const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' }[mime] || '.png';
-            imgPath = path.join(os.tmpdir(), 'ocx-img-' + msg.session_id + '-' + msg.id + ext);
+            imgPath = path.join(os.tmpdir(), 'ob-img-' + msg.session_id + '-' + msg.id + ext);
             fs.writeFileSync(imgPath, Buffer.from(msg.img.slice(msg.img.indexOf(',') + 1), 'base64'));
             log('imagen adjunta: ' + Math.round(fs.statSync(imgPath).size / 1024) + ' KB para el mensaje #' + msg.id);
         } catch (e) {

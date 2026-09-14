@@ -4,6 +4,29 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- Comando `openbridge update` (compara con npm; `--yes` actualiza la instalacion
+  global).
+- Comando `openbridge join <url>` para sumar una PC como puente de un hub:
+  persiste `apiUrl`/`apiToken`/`bridgeId` y arranca el puente (`--no-start` solo
+  guarda).
+- `npm run lint` (`scripts/lint.mjs`): `node --check` sobre todo el JS; corre en
+  CI.
+- Test end-to-end del puente con `opencode` mockeado (`test/bridge.test.js`) y
+  tests del CLI (`test/cli.test.js`).
+- `CONTRIBUTING.md`.
+
+### Cambiado
+
+- Claves internas `ocx_*` renombradas a `ob_*` con migracion automatica
+  (localStorage y cookie de tema). Se mantienen como compatibilidad el env
+  `OPENCONEX_HOME` y el bin `openconex` (deprecados).
+- `config.command` puede apuntar a un script de Node (`.js`/`.mjs`/`.cjs`): se
+  ejecuta con el `node` actual (wrappers propios y pruebas con CLI simulado).
+
 ## [0.4.0] - 2026-09-14
 
 ### Agregado

@@ -6,6 +6,7 @@ Guia para agentes que trabajen en este repo.
 
 - Instalar deps: `npm install`
 - Tests: `npm test` (usa `node --test`; debe pasar en Windows/Linux/macOS)
+- Lint: `npm run lint` (`node --check` sobre todo el JS; corre en CI)
 - Correr la app: `node bin/openbridge.js init --yes --dir <casa>` y
   `node bin/openbridge.js server --no-tunnel` (segundo plano; `--stream` para
   primer plano). Detener: `node bin/openbridge.js stop --dir <casa>`
@@ -15,8 +16,8 @@ Guia para agentes que trabajen en este repo.
 - Release (solo el dueno): `npm run release -- <patch|minor|major|prerelease|X.Y.Z>`
   (ver mas abajo).
 
-No hay linter todavia. Antes de cerrar un cambio, corre `npm test` y
-`node --check` sobre los archivos JS tocados.
+No hay linter con reglas todavia (`npm run lint` solo hace `node --check`).
+Antes de cerrar un cambio, corre `npm test` y `npm run lint`.
 
 ## Convenciones
 
