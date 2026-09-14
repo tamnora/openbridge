@@ -4,6 +4,16 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Corregido
+
+- Diagnostico de puerto ocupado: `status` y `server` muestran que **PID** usa el
+  puerto (suele ser otra casa con otro `--dir`) y, si el arranque en segundo plano
+  muere, se muestran las ultimas lineas de `server.log`.
+- `store`: reintentos con backoff en el `rename` atomico (EPERM/EACCES/EBUSY en
+  Windows) y limpieza del `.tmp` si no se puede.
+
 ## [0.5.1] - 2026-09-14
 
 ### Corregido

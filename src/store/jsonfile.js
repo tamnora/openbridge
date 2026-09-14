@@ -12,6 +12,29 @@ const fs = require('node:fs/promises');
 
 const locks = new Map();
 
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// En Windows, rename() puede fallar con EPERM/EACCES si otro proceso (antivirus,
+// indexador) tiene el archivo abierto un instante. Reintentamos con backoff y,
+// si no hay forma, limpiamos el .tmp.
+async function renameWithRetry(from, to, tries = 5) {
+    for (let i = 0; ; i++) {
+        try {
+            await fs.rename(from, to);
+            return;
+        } catch (e) {
+            const transient = e && (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'EBUSY');
+            if (!transient || i >= tries - 1) {
+                try { await fs.unlink(from); } catch (e2) { /* nada */ }
+                throw e;
+            }
+            await delay(20 * (i + 1));
+        }
+    }
+}
+
 function withLock(key, fn) {
     const prev = locks.get(key) || Promise.resolve();
     const run = prev.then(fn, fn);
@@ -33,7 +56,7 @@ async function readJson(file, fallback) {
 async function writeAtomic(file, data) {
     const tmp = file + '.' + process.pid + '.' + Math.random().toString(36).slice(2) + '.tmp';
     await fs.writeFile(tmp, JSON.stringify(data, null, 2));
-    await fs.rename(tmp, file);
+    await renameWithRetry(tmp, file);
 }
 
 /**

@@ -105,6 +105,70 @@ function pidAlive(pid) {
     try { process.kill(pid, 0); return true; } catch (e) { return false; }
 }
 
+// PIDs escuchando en un puerto TCP (netstat en Windows; lsof en el resto). Sirve
+// para explicar un EADDRINUSE: normalmente es OTRA casa (otro --dir) con el
+// mismo puerto por defecto.
+function portOwnerPids(port) {
+    try {
+        const win = process.platform === 'win32';
+        const r = spawnSync(win ? 'netstat' : 'lsof',
+            win ? ['-ano', '-p', 'tcp'] : ['-t', '-i', 'tcp:' + port, '-s', 'tcp:listen'],
+            { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+        if (r.error || !r.stdout) return [];
+        const pids = new Set();
+        if (!win) {
+            for (const n of String(r.stdout).split(/\s+/)) {
+                const p = parseInt(n, 10);
+                if (p > 0) pids.add(p);
+            }
+            return [...pids];
+        }
+        const re = new RegExp(':' + port + '\\s');
+        for (const line of String(r.stdout).split(/\r?\n/)) {
+            if (!re.test(line) || !/LISTENING/i.test(line)) continue;
+            const parts = line.trim().split(/\s+/);
+            const pid = parseInt(parts[parts.length - 1], 10);
+            if (pid > 0) pids.add(pid);
+        }
+        return [...pids];
+    } catch (e) {
+        return [];
+    }
+}
+
+// Nombre del proceso de un PID (best-effort) para el diagnostico del puerto.
+function describePid(pid) {
+    try {
+        if (process.platform === 'win32') {
+            const r = spawnSync('tasklist', ['/FI', 'PID eq ' + pid, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true, timeout: 8000 });
+            const m = String(r.stdout || '').match(/^"([^"]+)"/m);
+            return m ? m[1] : '';
+        }
+        const r = spawnSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8', windowsHide: true, timeout: 8000 });
+        return String(r.stdout || '').trim();
+    } catch (e) {
+        return '';
+    }
+}
+
+// "PID 123 (node.exe)" para el proceso que ocupa el puerto, o '' si no hay.
+function portHint(port) {
+    const pids = portOwnerPids(port);
+    if (!pids.length) return '';
+    return pids.map((p) => 'PID ' + p + (describePid(p) ? ' (' + describePid(p) + ')' : '')).join(', ');
+}
+
+// Ultimas `n` lineas no vacias de un archivo (para mostrar el error real del
+// server cuando arranca en segundo plano y muere).
+function tailLines(file, n) {
+    try {
+        const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => l.trim() !== '');
+        return lines.slice(-n).join('\n');
+    } catch (e) {
+        return '';
+    }
+}
+
 function runtimePath() { return paths.p('runtime.json'); }
 function readRuntime() {
     try { return JSON.parse(fs.readFileSync(runtimePath(), 'utf8')); } catch (e) { return null; }
@@ -328,6 +392,12 @@ async function cmdServer(argv) {
         await printStatus();
         if (!rt) {
             console.log('');
+            const tail = tailLines(paths.serverLogPath(), 8);
+            if (tail) {
+                console.log('Ultimas lineas de ' + paths.serverLogPath() + ':');
+                console.log(tail);
+                console.log('');
+            }
             console.log('No pude confirmar el arranque. Revisa: openbridge logs');
         }
         return 0;
@@ -349,6 +419,12 @@ async function cmdServer(argv) {
     } catch (e) {
         if (e && e.code === 'EADDRINUSE') {
             log.error('puerto ' + port + ' ocupado (¿ya corre OpenBridge?). Usa --port <otro> o `openbridge stop`.');
+            const hint = portHint(port);
+            if (hint) {
+                console.error('  lo esta usando: ' + hint);
+                console.error('  puede ser otra casa (otro --dir): proba `openbridge stop --dir <esa-casa>`'
+                    + (process.platform === 'win32' ? ' o `taskkill /PID ' + portOwnerPids(port)[0] + ' /T /F`.' : '.'));
+            }
             return 1;
         }
         throw e;
@@ -443,6 +519,14 @@ async function printStatus() {
         if (paths.exists()) {
             console.log('  carpeta: ' + paths.baseDir());
             console.log('  datos  : ' + paths.home());
+            try {
+                const app = config.readApp();
+                const hint = portHint(app.port);
+                if (hint) {
+                    console.log('  aviso  : el puerto ' + app.port + ' ya lo usa ' + hint);
+                    console.log('           suele ser otra casa (otro --dir); cerrala con `openbridge stop --dir <esa-casa>` o usa --port <otro>.');
+                }
+            } catch (e) { /* sin app.json no hay puerto que mirar */ }
         }
         return false;
     }
