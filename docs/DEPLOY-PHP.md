@@ -50,9 +50,18 @@ app.js  sw.js  manifest.webmanifest  themes/  icons/  templates/
 
 ## 2. Configurar `.openbridge/app.json`
 
-Es el **mismo formato** que usa el hub Node (casa portable). Lo podes preparar en
-la PC con `openbridge init` + `openbridge users ...` y subir el archivo, o editar
-el de ejemplo (`.openbridge.example/app.json`, admin / `openbridge`).
+> **Nunca subas el `app.json` de ejemplo** (`.openbridge.example/app.json`): sus
+> `csrfSecret` y `bridgeToken` estan en el repo publico. Con el `csrfSecret` se
+> puede **falsificar la cookie de sesion** (entrar como admin sin contrasena).
+> Genera uno con secretos nuevos:
+
+```bash
+node scripts/gen-hub-app.mjs --base php/dist --url https://openbridge.tamnora.com
+# imprime la contrasena del admin (usuario: admin)
+```
+
+Es el **mismo formato** que usa el hub Node (casa portable). Tambien lo podes
+preparar con `openbridge init` + `openbridge users ...` y subir el archivo.
 
 - `baseUrl`: `https://openbridge.tamnora.com` (sin barra final; lo usa el push).
 - `users[]`: `{ id, name, role, password:{algo:scrypt,salt,hash,keylen}, pv, disabled }`.

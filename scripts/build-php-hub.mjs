@@ -39,13 +39,18 @@ for (const entry of fs.readdirSync(assetsDir)) {
 }
 copyInto(tplDir, path.join(distDir, 'templates'));
 
-// .openbridge de ejemplo si no hay uno real (config + data vacia), protegido
-// por .htaccess (contiene secretos y datos).
+// .openbridge: usa el app.json propio de `php/app/.openbridge/` (persistente y
+// gitignored). Si no existe, avisa y cae al de ejemplo (secretos publicos).
 const obHome = path.join(distDir, '.openbridge');
 fs.mkdirSync(path.join(obHome, 'data'), { recursive: true });
 fs.copyFileSync(path.join(appDir, 'htaccess-deny'), path.join(obHome, '.htaccess'));
-if (!fs.existsSync(path.join(obHome, 'app.json'))) {
+const ownApp = path.join(appDir, '.openbridge', 'app.json');
+if (fs.existsSync(ownApp)) {
+    fs.copyFileSync(ownApp, path.join(obHome, 'app.json'));
+} else {
     fs.copyFileSync(path.join(appDir, '.openbridge.example', 'app.json'), path.join(obHome, 'app.json'));
+    console.log('AVISO: se uso el app.json de EJEMPLO (secretos publicos). Genera uno real con:');
+    console.log('       node scripts/gen-hub-app.mjs --base php/app --url https://tu-dominio');
 }
 
 console.log('php/dist listo en ' + distDir);
