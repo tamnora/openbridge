@@ -91,6 +91,7 @@ iniciar sesión** una vez; los chats, carpetas, túnel y push se conservan.
 | `openbridge logs` | Logs (`--follow`, `--server`, `--bridge`) |
 | `openbridge bridge` | Corre **solo** el puente (`--api --token --id --name`) |
 | `openbridge join` | Vincula esta PC como puente de un hub (`<url> --token --id --name`) |
+| `openbridge pair` | Empareja esta PC con un **hub PHP** por código (`<url> [--id --name]`) |
 | `openbridge import` | Trae `data/` de OpenConex (`<data-dir> [--force]`) |
 | `openbridge reset` | Borra chats/datos (`--session <id>`, `--yes`) |
 | `openbridge autostart` | Arranque automático (`install`/`remove`) |
@@ -143,6 +144,23 @@ Ejemplo concreto:
 
 El puente remoto solo necesita salida a internet hacia el hub; no abre puertos ni
 túnel propio. Para que arranque solo en cada PC: `openbridge autostart install`.
+
+## Hub en hosting PHP (URL fija, sin túnel)
+
+Además del hub Node, OpenBridge puede correr su hub en un **hosting PHP** (cPanel),
+igual que OpenConex, y dejar que cada PC corra solo el puente:
+
+```
+[Celular] --HTTPS--> openbridge.tamnora.com (hub PHP)  -->  [PC] openbridge pair
+```
+
+- Web siempre arriba, **URL fija** y PWA/Web Push estables; sin túneles ni puertos.
+- Cada PC se vincula con un **código**: en la PC `openbridge pair <url>` muestra un
+  código y en la web lo ingresás en **Dispositivos -> Agregar PC**. Cada PC queda
+  con su **token propio** (revocable); cada usuario ve solo sus PCs (el admin, todas).
+- El frontend es el mismo del hub Node (se copia, no se duplica).
+
+Guía completa (requisitos, build, subida y emparejamiento): [`docs/DEPLOY-PHP.md`](docs/DEPLOY-PHP.md).
 
 ## Túnel y URL estable
 

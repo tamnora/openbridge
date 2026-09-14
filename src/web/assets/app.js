@@ -67,6 +67,7 @@ var els = {
     viewProcs: document.getElementById('viewProcs'),
     viewChanges: document.getElementById('viewChanges'),
     viewMcp: document.getElementById('viewMcp'),
+    viewDevices: document.getElementById('viewDevices'),
     themeColor: document.getElementById('themeColor'),
     themeLink: document.getElementById('themeStylesheet'),
     statusbar: document.getElementById('statusbar'),
@@ -146,6 +147,7 @@ var state = {
     catVer: '',
     bridges: [],          // resumen de puentes registrados [{id,name,online,busy_session}]
     activeBridge: '',     // puente seleccionado en el sidebar (id)
+    features: {},         // capacidades del hub (p. ej. {pairing:true} en el hub PHP)
     isSending: false,
     pendingImage: null,
     messages: [],
@@ -431,6 +433,11 @@ async function refreshBridgeData() {
 // Aplica la respuesta de bootstrap (o de un refresh tras cambio de puente).
 function applyBootPayload(data) {
     if (!data || !data.ok) return;
+    if (data.features) {
+        state.features = data.features;
+        var devBtn = document.querySelector('#sidebar .utilities button[data-view="devices"]');
+        if (devBtn) devBtn.style.display = state.features.pairing ? '' : 'none';
+    }
     var newB = Array.isArray(data.bridges) ? data.bridges : null;
     if (newB && newB.length) {
         // El puente activo guardado puede no existir (o ser el legacy '' tras
@@ -1011,6 +1018,7 @@ function showView(name) {
     els.viewProcs.style.display = 'none';
     els.viewChanges.style.display = 'none';
     els.viewMcp.style.display = 'none';
+    if (els.viewDevices) els.viewDevices.style.display = 'none';
 
     if (name !== 'procs') stopProcView();
 
@@ -1089,6 +1097,12 @@ function showView(name) {
         els.sendForm.style.display = 'none';
         els.btnCmds.style.display = 'none';
         renderMcpView();
+    } else if (name === 'devices') {
+        els.viewDevices.style.display = '';
+        els.btnBack.style.display = 'none';
+        els.sendForm.style.display = 'none';
+        els.btnCmds.style.display = 'none';
+        renderDevicesView();
     }
 
     if (els.fabNew) els.fabNew.classList.toggle('show', name === 'home');
@@ -3060,6 +3074,79 @@ async function loadMcp() {
     var output = (res.data && res.data.output) || '';
     els.viewMcp.innerHTML = head + '<pre class="codeblock">'
         + esc(output || 'No hay servidores MCP configurados.') + '</pre>';
+}
+
+// ---------------------------------------------------------------------------
+// Vista Dispositivos: PCs emparejadas a la cuenta (solo hub PHP). El usuario
+// corre `openbridge pair <url>` en su PC, ve un codigo y lo ingresa aca.
+// ---------------------------------------------------------------------------
+function renderDevicesView() {
+    els.hTitle.textContent = 'dispositivos';
+    els.hSub.textContent = 'tus PCs emparejadas';
+    loadDevices();
+}
+
+async function loadDevices() {
+    if (!els.viewDevices) return;
+    var head = '<div class="view-head"><h2>mis PCs</h2>'
+        + '<div class="view-sub">emparejadas a tu cuenta</div></div>';
+    var res = await api('api.php?action=bridges');
+    if (!res.ok) {
+        els.viewDevices.innerHTML = head + '<div class="placeholder">' + esc(res.error || 'no se pudo consultar') + '</div>';
+        return;
+    }
+    els.viewDevices.innerHTML = head
+        + '<div class="dev-add">'
+        + '<input type="text" id="devCode" placeholder="codigo (ej: ABCD-EFGH)" autocomplete="off" spellcheck="false">'
+        + '<button type="button" class="linkbtn" id="devAdd">agregar PC</button>'
+        + '</div>'
+        + '<div class="view-sub">En tu PC: <code>openbridge pair ' + esc(location.origin) + '</code> y te muestra un codigo. Ingresalo aca.</div>'
+        + '<div id="devList"></div>';
+    var input = document.getElementById('devCode');
+    var btn = document.getElementById('devAdd');
+    if (btn) btn.addEventListener('click', function () { addDevice(input.value); });
+    if (input) input.addEventListener('keydown', function (e) { if (e.key === 'Enter') addDevice(input.value); });
+    renderDeviceList(res.bridges || []);
+}
+
+function renderDeviceList(list) {
+    var box = document.getElementById('devList');
+    if (!box) return;
+    if (!list.length) {
+        box.innerHTML = '<div class="placeholder">Todavia no emparejaste ninguna PC.</div>';
+        return;
+    }
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        html += '<div class="device"><span class="dot"' + (b.online ? '' : ' style="background:var(--muted)"') + '></span>'
+            + '<b>' + esc(b.name) + '</b><span class="dnote">' + esc(b.id) + '</span>'
+            + '<button type="button" class="linkbtn" data-revoke="' + esc(b.id) + '">desvincular</button></div>';
+    }
+    box.innerHTML = html;
+    var btns = box.querySelectorAll('[data-revoke]');
+    for (var j = 0; j < btns.length; j++) {
+        btns[j].addEventListener('click', function () { revokeDevice(this.getAttribute('data-revoke')); });
+    }
+}
+
+async function addDevice(code) {
+    code = (code || '').trim();
+    if (!code) return;
+    var res = await fetch('api.php?action=bridge_pair_approve', apiCsrf('POST', { user_code: code }))
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { ok: false, error: 'network' }; });
+    if (!res.ok) { alert(res.error || 'no se pudo emparejar'); return; }
+    loadDevices();
+}
+
+async function revokeDevice(id) {
+    if (!window.confirm('Desvincular la PC "' + id + '"?')) return;
+    var res = await fetch('api.php?action=bridge_revoke', apiCsrf('POST', { id: id }))
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { ok: false, error: 'network' }; });
+    if (!res.ok) { alert(res.error || 'no se pudo desvincular'); return; }
+    loadDevices();
 }
 
 function chgStatusClass(st) {

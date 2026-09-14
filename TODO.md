@@ -25,9 +25,9 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   `openbridge tunnel` y `init --domain`.
 - QR propio (`src/qr.js`, sin dependencias): en `init`/`status`/`server` y `openbridge qr`.
 - `bridge.js` parametrizado para la casa portable, con overrides por entorno.
-- Tests (`node --test`): **33/33** (smoke, auth/roles, API, QR, release, bridge
-  end-to-end con opencode mockeado, CLI, `safeJoinWorkspace`, migración).
-  CI Windows/Linux/macOS.
+- Tests (`node --test`): **35/35** (smoke, auth/roles, API, QR, release, bridge
+  end-to-end con opencode mockeado, CLI, `safeJoinWorkspace`, migración, hub PHP
+  end-to-end con `php -S`). CI Windows/Linux/macOS.
 - Release privado (`scripts/release.mjs`): guard de dueño, semver/prerelease y dist-tags.
 - Web: chat con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
   tokens/contexto y **costo**, archivos, **cambios** (git status/diff) con **revertir**,
@@ -69,6 +69,20 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] `openbridge tunnel` (estado/cambio de proveedor) y guardar el dominio en `app.json`; `init --domain`.
 - [x] Re-suscripción push automática al reabrir la app en la URL nueva (`pushSync`).
 - [x] `trust proxy` explícito: la cookie usa `Secure` con `X-Forwarded-Proto` solo desde loopback.
+
+## 2c. Hub PHP (hosting)
+
+- [x] Port del hub a PHP (`php/app`: api.php, lib.php, hub.php, paginas) con el
+      mismo contrato `?action=...` y el frontend compartido (se copia en el build).
+- [x] Auth multiusuario en PHP: scrypt compatible con Node (`sodium` + fallback
+      puro), cookie `ob_session` firmada, roles, rate limit y CSP.
+- [x] Emparejamiento por codigo (`openbridge pair`): device code, token por PC y
+      dueño (`owner`) en `bridges.json`; vista **Dispositivos** (gateada por
+      `features.pairing`); aislamiento entre usuarios (admin ve todo).
+- [x] `scripts/build-php-hub.mjs` (arma `php/dist`) y `docs/DEPLOY-PHP.md`.
+- [ ] **Desplegar** en cPanel (subdominio + SSL, subir `php/dist`, `data/` 0755/0775)
+      y emparejar las PCs reales. Confirmar que el hosting tenga `sodium`.
+- [ ] Backport del pairing/dueno al hub Node (paridad; hoy solo PHP).
 
 ## 3. CLI / ciclo de vida
 

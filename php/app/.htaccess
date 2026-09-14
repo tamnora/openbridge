@@ -1,0 +1,19 @@
+# Evitar acceso directo a los archivos de configuracion y funciones.
+<IfModule mod_authz_core.c>
+    <FilesMatch "^(config|lib|hub)\.php$">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <FilesMatch "^(config|lib|hub)\.php$">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+</IfModule>
+
+# Compresion gzip para respuestas JSON/JS/CSS/HTML (baja ~80% el trafico del
+# catalogo y la API). text/event-stream queda excluido a proposito para no
+# bufferear el stream SSE.
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE application/json application/x-json text/html text/plain text/css application/javascript text/javascript application/x-javascript
+</IfModule>

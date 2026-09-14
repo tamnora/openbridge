@@ -32,3 +32,8 @@ Thumbs.db
 
 # Capturas de vista previa (locales)
 preview/
+
+# Hub PHP: `php/dist/` se genera con scripts/build-php-hub.mjs (no se commitea)
+php/dist/
+# El app.json de ejemplo SI se commitea (el patron `app.json` de arriba lo tapaba).
+!php/app/.openbridge.example/app.json

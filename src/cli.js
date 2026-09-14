@@ -751,6 +751,101 @@ async function cmdJoin(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// pair: empareja esta PC con un hub PHP por codigo (device code). La PC pide
+// un codigo, el usuario lo tipea en la web (Dispositivos -> Agregar PC) y la PC
+// recibe su token propio. Necesita un hub PHP (openbridge.tamnora.com).
+// ---------------------------------------------------------------------------
+async function pairApi(apiUrl, action, body) {
+    const res = await fetch(apiUrl + '?action=' + action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) { json = null; }
+    if (!json) throw new Error('respuesta invalida del hub (HTTP ' + res.status + ')');
+    return json;
+}
+
+async function cmdPair(argv) {
+    const { flags, _ } = parseArgs(argv);
+    const url = String(_[0] || flags.hub || flags.api || '').trim();
+    if (!/^https?:\/\//i.test(url)) {
+        console.error('Uso: openbridge pair <url-del-hub> [--id <pc>] [--name "<nombre>"] [--no-start]');
+        console.error('Ej.:  openbridge pair https://openbridge.tamnora.com --name "PC 1"');
+        return 1;
+    }
+    paths.ensureDirs();
+    const cfg = config.readBridge();
+    const apiUrl = hubApiUrl(url);
+    const bridgeId = sanitizeId(flags.id || cfg.bridgeId || os.hostname());
+    const bridgeName = (typeof flags.name === 'string' && flags.name.trim())
+        ? flags.name.trim().slice(0, 40)
+        : (cfg.bridgeName || bridgeId);
+
+    let start;
+    try {
+        start = await pairApi(apiUrl, 'bridge_pair_start', { bridge_id: bridgeId, bridge_name: bridgeName });
+    } catch (e) {
+        console.error('No pude iniciar el emparejamiento: ' + e.message);
+        return 1;
+    }
+    if (!start.ok) {
+        console.error('El hub rechazo el emparejamiento: ' + (start.error || 'error'));
+        return 1;
+    }
+
+    const verify = start.verify_url || url;
+    console.log('Para vincular esta PC a tu cuenta:');
+    console.log('  1. Abri ' + verify + ' y logueate.');
+    console.log('  2. Anda a Dispositivos -> Agregar PC.');
+    console.log('  3. Ingresa el codigo:  ' + start.user_code);
+    console.log('');
+    console.log('Esperando aprobacion (vence en ' + Math.round((parseInt(start.expires_in, 10) || 600) / 60) + ' min)...');
+
+    const deadline = Date.now() + (parseInt(start.expires_in, 10) || 600) * 1000;
+    let token = '';
+    let finalId = bridgeId;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        let p;
+        try {
+            p = await pairApi(apiUrl, 'bridge_pair_poll', { device_code: start.device_code });
+        } catch (e) {
+            process.stdout.write('.');
+            continue;
+        }
+        if (p.status === 'approved' && p.bridge_token) {
+            token = p.bridge_token;
+            finalId = p.bridge_id || bridgeId;
+            break;
+        }
+        if (p.status === 'expired' || p.status === 'unknown') {
+            console.error('\nEl codigo vencio. Volve a correr: openbridge pair ' + url);
+            return 1;
+        }
+        process.stdout.write('.');
+    }
+    if (!token) {
+        console.error('\nSe agoto el tiempo. Volve a correr: openbridge pair ' + url);
+        return 1;
+    }
+
+    cfg.apiUrl = apiUrl;
+    cfg.apiToken = token;
+    cfg.bridgeId = finalId;
+    cfg.bridgeName = bridgeName;
+    config.writeBridge(cfg);
+    console.log('\nPC emparejada: ' + finalId + ' (' + bridgeName + ')');
+    if (flags['no-start']) {
+        console.log('Arrancala con: openbridge bridge');
+        return 0;
+    }
+    console.log('Arrancando el puente (Ctrl+C para salir)...');
+    return cmdBridge([]);
+}
+
+// ---------------------------------------------------------------------------
 // import / reset (datos)
 // ---------------------------------------------------------------------------
 async function cmdImport(argv) {
@@ -1109,6 +1204,7 @@ function usage() {
     console.log('  logs      Ultimas lineas de los logs (--follow --server --bridge)');
     console.log('  bridge    Corre solo el puente (--api --token --id --name)');
     console.log('  join      Vincula esta PC como puente de un hub (<url> --token --id --name)');
+    console.log('  pair      Empareja esta PC con un hub PHP por codigo (<url> [--id --name])');
     console.log('  import    Trae data/ de OpenConex (<data-dir> [--force])');
     console.log('  reset     Borra todos los chats/datos (--session <id> --yes)');
     console.log('  autostart Instala/quita el arranque automatico (install|remove)');
@@ -1144,6 +1240,7 @@ async function main(argv) {
         case 'logs': return cmdLogs(args.slice(1));
         case 'bridge': return cmdBridge(args.slice(1));
         case 'join': return cmdJoin(args.slice(1));
+        case 'pair': return cmdPair(args.slice(1));
         case 'import': return cmdImport(args.slice(1));
         case 'reset': return cmdReset(args.slice(1));
         case 'autostart': return cmdAutostart(args.slice(1));

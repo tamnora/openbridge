@@ -1,0 +1,31 @@
+{
+  "port": 8799,
+  "host": "127.0.0.1",
+  "baseUrl": "https://openbridge.tamnora.com",
+  "users": [
+    {
+      "id": "u_admin",
+      "name": "admin",
+      "role": "admin",
+      "password": {
+        "algo": "scrypt",
+        "salt": "094289a8ef3c1d6a28e5fde101db6b80",
+        "hash": "921eb687f7762c7aa4abdc273b1e416193bec250e7849a79dc0ec95a8e074f28afb6612288908de7c89b8b193d981c2206094eafdc6a729b598c8d5816875eb5",
+        "keylen": 64
+      },
+      "pv": 1,
+      "created": "",
+      "disabled": false
+    }
+  ],
+  "csrfSecret": "LLQ5EeWnnOvdoxDPc6qDjgaBLZUq0Ra5Wy_QQPBFlig",
+  "bridgeToken": "3NtZ6FajrPMbijOMMxH10Lqhh8sNxF0C8XxrucI5szQ",
+  "vapid": {
+    "publicKey": "",
+    "privateKey": ""
+  },
+  "tunnel": {
+    "provider": "none",
+    "domain": ""
+  }
+}

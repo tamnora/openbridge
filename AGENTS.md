@@ -15,6 +15,8 @@ Guia para agentes que trabajen en este repo.
   (roles `admin`/`user`; los cambios requieren reiniciar el server).
 - Release (solo el dueno): `npm run release -- <patch|minor|major|prerelease|X.Y.Z>`
   (ver mas abajo).
+- Hub PHP (opcional, para hosting): `node scripts/build-php-hub.mjs` arma
+  `php/dist/` (backend + front compartido). Probar: `php -S 127.0.0.1:8799 -t php/dist`.
 
 No hay linter con reglas todavia (`npm run lint` solo hace `node --check`).
 Antes de cerrar un cambio, corre `npm test` y `npm run lint`.
@@ -41,11 +43,16 @@ Antes de cerrar un cambio, corre `npm test` y `npm run lint`.
 - Puente: `src/bridge/bridge.js`
 - Docs: `docs/ARCHITECTURE.md` · Pendientes: `TODO.md`
 - Release (local): `scripts/release.mjs` (fuera del paquete npm)
+- Hub PHP (hosting): `php/app/` (`api.php`, `lib.php`, `hub.php`) ·
+  `scripts/build-php-hub.mjs` · `docs/DEPLOY-PHP.md`
 
 ## Reglas
 
 - No commitear `.openbridge/` ni los archivos legacy (`config.json`, `app.json`,
   `data/`, `logs/`); estan en `.gitignore`.
+- El frontend del hub PHP **se copia** desde `src/web/assets` y `src/web/templates`
+  (no duplicar `app.js`/`chat.html`): editar en `src/web` y correr
+  `node scripts/build-php-hub.mjs`. `php/dist/` esta en `.gitignore`.
 - Mantener `TODO.md` y `CHANGELOG.md` al dia cuando cierres un pendiente.
 - No hacer commit ni push salvo que el usuario lo pida.
 

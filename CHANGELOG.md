@@ -4,6 +4,21 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- **Hub PHP** para correr la app en un hosting (cPanel) con URL fija, sin tunel
+  (`php/app` + `scripts/build-php-hub.mjs`; comparte el frontend con el hub Node).
+  Auth multiusuario con scrypt compatible con Node (usa `sodium`; si falta, scrypt
+  puro en PHP), roles, cookie de sesion firmada, rate limit y CSP.
+- **Emparejamiento por codigo** (`openbridge pair <url>`): la PC muestra un codigo,
+  el usuario lo ingresa en la web (Dispositivos) y la PC recibe su **token propio**
+  y revocable. Cada usuario ve solo sus PCs; el admin, todas.
+- Comando `openbridge pair` y vista **Dispositivos** en la web (solo en el hub PHP,
+  gateada por `features.pairing`).
+- `docs/DEPLOY-PHP.md`: guia de despliegue del hub PHP.
+
 ## [0.5.2] - 2026-09-14
 
 ### Corregido

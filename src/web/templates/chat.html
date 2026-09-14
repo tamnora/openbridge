@@ -378,6 +378,14 @@
         }
 
         /* ----- Tab de procesos (dev servers de la sesión activa) ----- */
+        #viewDevices .dev-add { display: flex; gap: 8px; margin: 10px 0; }
+        #viewDevices .dev-add input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); font: inherit; }
+        #viewDevices .dev-add input:focus { border-color: var(--accent); outline: none; }
+        #viewDevices .device { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; background: var(--panel); }
+        #viewDevices .device .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok, #22c55e); flex-shrink: 0; }
+        #viewDevices .device .dnote { color: var(--muted); font-size: 11.5px; }
+        #viewDevices .device .linkbtn { margin-left: auto; }
+        #viewDevices code { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; font-size: 11.5px; }
         #viewProcs .pp-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
         #viewProcs .pp-head b { font-size: 16px; font-weight: 600; }
         #viewProcs .pp-head b::before { content: "❯ "; color: var(--mine); }
@@ -1204,6 +1212,7 @@
             <button data-view="procs" type="button" title="Procesos de la sesión">procs</button>
             <button data-view="changes" type="button" title="Cambios del proyecto (git)">cambios</button>
             <button data-view="mcp" type="button" title="Servidores MCP de opencode">mcp</button>
+        <button data-view="devices" type="button" title="PCs emparejadas a tu cuenta" style="display:none">dispositivos</button>
         </div>
         <div class="footer">
             <div class="row" id="bridgeStatusRow">
@@ -1287,6 +1296,7 @@
         <div id="viewProcs" class="view" style="display:none"></div>
         <div id="viewChanges" class="view" style="display:none"></div>
         <div id="viewMcp" class="view" style="display:none"></div>
+        <div id="viewDevices" class="view" style="display:none"></div>
 
         <footer id="statusbar">
             <span class="dot" id="sbDot"></span>
