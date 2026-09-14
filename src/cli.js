@@ -682,12 +682,46 @@ async function cmdLogs(argv) {
 // ---------------------------------------------------------------------------
 // bridge (solo el puente, para modo hub remoto)
 // ---------------------------------------------------------------------------
+function bridgePid() {
+    try {
+        return parseInt(fs.readFileSync(paths.bridgeLockPath(), 'utf8'), 10) || 0;
+    } catch (e) {
+        return 0;
+    }
+}
+
 async function cmdBridge(argv) {
     const { flags } = parseArgs(argv);
     if (!fs.existsSync(paths.configPath())) {
-        console.error('No hay configuracion de puente en ' + paths.home() + '. Corre primero: openbridge join <url> o openbridge init');
+        console.error('No hay configuracion de puente en ' + paths.home() + '. Corre primero: openbridge join <url> o openbridge pair <url>');
         return 1;
     }
+
+    if (flags.stop) {
+        const pid = bridgePid();
+        if (!pid || !pidAlive(pid)) {
+            try { fs.unlinkSync(paths.bridgeLockPath()); } catch (e) { /* nada */ }
+            console.log('El puente no esta corriendo.');
+            return 0;
+        }
+        killPid(pid);
+        try { fs.unlinkSync(paths.bridgeLockPath()); } catch (e) { /* nada */ }
+        console.log('Puente detenido (pid ' + pid + ').');
+        return 0;
+    }
+
+    const cfg = config.readBridge();
+    if (flags.status) {
+        const pid = bridgePid();
+        const live = pid && pidAlive(pid);
+        console.log('Puente: ' + (live ? 'corriendo (pid ' + pid + ')' : 'detenido'));
+        console.log('  hub    : ' + (cfg.apiUrl || '(sin configurar)'));
+        console.log('  id     : ' + (cfg.bridgeId || '(sin id)'));
+        console.log('  nombre : ' + (cfg.bridgeName || ''));
+        console.log('  log    : ' + paths.bridgeLogPath());
+        return 0;
+    }
+
     // Permite apuntar a otro hub sin editar config.json a mano.
     const env = { ...process.env, OPENBRIDGE_HOME: paths.baseDir() };
     if (flags.api) env.OPENBRIDGE_API_URL = String(flags.api);
@@ -695,6 +729,33 @@ async function cmdBridge(argv) {
     if (flags.id) env.OPENBRIDGE_BRIDGE_ID = String(flags.id);
     if (flags.name) env.OPENBRIDGE_BRIDGE_NAME = String(flags.name);
     const bridgePath = path.join(__dirname, 'bridge', 'bridge.js');
+
+    // Segundo plano: detached + stdio ignorado; sobrevive al cierre de la consola.
+    if (flags.background || flags.bg || flags.detach || flags.d) {
+        const existing = bridgePid();
+        if (existing && pidAlive(existing)) {
+            console.log('El puente ya corre en segundo plano (pid ' + existing + ').');
+            console.log('  estado: openbridge bridge --status   ·   detener: openbridge bridge --stop');
+            return 0;
+        }
+        const child = spawn(process.execPath, [bridgePath], {
+            cwd: paths.home(),
+            env,
+            stdio: 'ignore',
+            windowsHide: true,
+            detached: true,
+        });
+        child.unref();
+        await new Promise((r) => setTimeout(r, 900));
+        const pid = bridgePid() || child.pid;
+        console.log('Puente en segundo plano (pid ' + pid + ').');
+        console.log('  hub    : ' + (cfg.apiUrl || '(sin configurar)'));
+        console.log('  log    : ' + paths.bridgeLogPath());
+        console.log('  estado : openbridge bridge --status');
+        console.log('  detener: openbridge bridge --stop');
+        return 0;
+    }
+
     const child = spawn(process.execPath, [bridgePath], {
         cwd: paths.home(),
         env,
@@ -718,11 +779,16 @@ function hubApiUrl(raw) {
     return u;
 }
 
+// Reenvia `--background` a `openbridge bridge` cuando join/pair lo piden.
+function bridgeStartArgs(flags) {
+    return (flags.background || flags.bg || flags.detach || flags.d) ? ['--background'] : [];
+}
+
 async function cmdJoin(argv) {
     const { flags, _ } = parseArgs(argv);
     const url = String(_[0] || flags.api || '').trim();
     if (!url || !/^https?:\/\//i.test(url)) {
-        console.error('Uso: openbridge join <url-del-hub> [--token <t>] [--id <pc>] [--name "<nombre>"] [--no-start]');
+        console.error('Uso: openbridge join <url-del-hub> [--token <t>] [--id <pc>] [--name "<nombre>"] [--no-start] [--background]');
         console.error('Ej.:  openbridge join https://mi-pc.trycloudflare.com --token <t> --id pc2 --name "PC oficina"');
         console.error('(acepta la base, /chat.php o /api.php; se normaliza a /api.php)');
         return 1;
@@ -747,7 +813,7 @@ async function cmdJoin(argv) {
     }
     console.log('');
     console.log('Arrancando el puente (Ctrl+C para salir)...');
-    return cmdBridge([]);
+    return cmdBridge(bridgeStartArgs(flags));
 }
 
 // ---------------------------------------------------------------------------
@@ -771,7 +837,7 @@ async function cmdPair(argv) {
     const { flags, _ } = parseArgs(argv);
     const url = String(_[0] || flags.hub || flags.api || '').trim();
     if (!/^https?:\/\//i.test(url)) {
-        console.error('Uso: openbridge pair <url-del-hub> [--id <pc>] [--name "<nombre>"] [--no-start]');
+        console.error('Uso: openbridge pair <url-del-hub> [--id <pc>] [--name "<nombre>"] [--no-start] [--background]');
         console.error('Ej.:  openbridge pair https://openbridge.tamnora.com --name "PC 1"');
         return 1;
     }
@@ -842,7 +908,7 @@ async function cmdPair(argv) {
         return 0;
     }
     console.log('Arrancando el puente (Ctrl+C para salir)...');
-    return cmdBridge([]);
+    return cmdBridge(bridgeStartArgs(flags));
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,12 +1128,18 @@ async function cmdAutostart(argv) {
     }
     try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (e) { /* nada */ }
     const home = paths.baseDir();
+    // Si esta PC es un puente de un hub remoto (join/pair), el autostart corre
+    // solo el puente; si es el hub local, corre el server.
+    let acfg = { apiUrl: '' };
+    try { acfg = config.readBridge(); } catch (e) { /* nada */ }
+    const remote = /^https?:\/\//i.test(acfg.apiUrl || '') && !/127\.0\.0\.1|localhost/i.test(acfg.apiUrl);
+    const runArgs = remote ? 'bridge' : 'server --stream --no-tunnel';
     if (process.platform === 'win32') {
         const ps = [
             '$ws = New-Object -ComObject WScript.Shell;',
             '$sc = $ws.CreateShortcut(' + JSON.stringify(target) + ');',
             '$sc.TargetPath = ' + JSON.stringify(node) + ';',
-            '$sc.Arguments = ' + JSON.stringify('"' + bin + '" server --stream --no-tunnel') + ';',
+            '$sc.Arguments = ' + JSON.stringify('"' + bin + '" ' + runArgs) + ';',
             '$sc.WorkingDirectory = ' + JSON.stringify(home) + ';',
             '$sc.WindowStyle = 7;',
             '$sc.Save();',
@@ -1080,7 +1152,8 @@ async function cmdAutostart(argv) {
             + '<plist version="1.0"><dict>'
             + '<key>Label</key><string>net.openbridge.server</string>'
             + '<key>ProgramArguments</key><array>'
-            + '<string>' + node + '</string><string>' + bin + '</string><string>server</string><string>--stream</string><string>--no-tunnel</string>'
+            + '<string>' + node + '</string><string>' + bin + '</string>'
+            + runArgs.split(' ').map((a) => '<string>' + a + '</string>').join('')
             + '</array>'
             + '<key>WorkingDirectory</key><string>' + home + '</string>'
             + '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>'
@@ -1089,7 +1162,7 @@ async function cmdAutostart(argv) {
     } else {
         const unit = '[Unit]\nDescription=OpenBridge\nAfter=network-online.target\n\n'
             + '[Service]\nType=simple\n'
-            + 'ExecStart=' + node + ' ' + bin + ' server --stream --no-tunnel\n'
+            + 'ExecStart=' + node + ' ' + bin + ' ' + runArgs + '\n'
             + 'WorkingDirectory=' + home + '\nRestart=on-failure\n\n'
             + '[Install]\nWantedBy=default.target\n';
         fs.writeFileSync(target, unit);
@@ -1097,7 +1170,7 @@ async function cmdAutostart(argv) {
         spawnSync('systemctl', ['--user', 'enable', '--now', 'openbridge.service'], { windowsHide: true });
     }
     console.log('autostart instalado: ' + target);
-    console.log('  (arranca `openbridge server --stream --no-tunnel` en ' + home + ')');
+    console.log('  (arranca `openbridge ' + runArgs + '` en ' + home + ')');
     return 0;
 }
 
@@ -1202,7 +1275,7 @@ function usage() {
     console.log('  qr        Muestra la URL (publica o local) como QR para el celular');
     console.log('  tunnel    Muestra o cambia el proveedor de tunel (tunnelmole|ngrok|cloudflare|none) [--domain]');
     console.log('  logs      Ultimas lineas de los logs (--follow --server --bridge)');
-    console.log('  bridge    Corre solo el puente (--api --token --id --name)');
+    console.log('  bridge    Corre solo el puente (--background | --stop | --status)');
     console.log('  join      Vincula esta PC como puente de un hub (<url> --token --id --name)');
     console.log('  pair      Empareja esta PC con un hub PHP por codigo (<url> [--id --name])');
     console.log('  import    Trae data/ de OpenConex (<data-dir> [--force])');

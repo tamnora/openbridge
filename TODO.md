@@ -10,8 +10,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - CLI: `init`, `passwd` (`--user`), `users`
   (`list`/`add`/`remove`/`passwd`/`role`/`disable`/`enable`), `server`/`start`
   (segundo plano; `--stream`), `stop`, `status`, `qr`, `tunnel`, `logs`
-  (`--follow`), `bridge` (`--api --token --id --name`), `import`, `reset`,
-  `autostart install|remove`, `doctor`, `version`, `help`.
+  (`--follow`), `bridge` (`--background`/`--stop`/`--status`), `join`, `pair`,
+  `import`, `reset`, `autostart install|remove`, `doctor`, `version`, `help`.
 - Casa portable (`paths.js`): todo en `<base>/.openbridge/` (`config.json`, `app.json`,
   `folders.json`, `data/`, `logs/`) con migración automática del layout viejo.
 - Store (`src/store/`): port de `lib.php` con mutex por archivo y escritura atómica.

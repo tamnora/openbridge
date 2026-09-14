@@ -55,5 +55,52 @@ test('cli help: lista los comandos nuevos', () => {
     const r = run(['help']);
     assert.equal(r.status, 0);
     assert.match(r.stdout, /join/);
+    assert.match(r.stdout, /pair/);
     assert.match(r.stdout, /update/);
+});
+
+test('cli bridge: sin configuracion falla con un mensaje claro', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cli-'));
+    try {
+        const r = run(['bridge', '--dir', dir]);
+        assert.equal(r.status, 1);
+        assert.match(r.stderr, /configuracion/i);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('cli bridge --status: reporta detenido cuando no corre', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cli-'));
+    try {
+        run(['join', 'https://hub.example.com', '--token', 'tok', '--id', 'pc9', '--no-start', '--dir', dir]);
+        const r = run(['bridge', '--status', '--dir', dir]);
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /detenido/);
+        assert.match(r.stdout, /https:\/\/hub\.example\.com\/api\.php/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('cli bridge --stop: sin puente corriendo no falla', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cli-'));
+    try {
+        run(['join', 'https://hub.example.com', '--token', 'tok', '--no-start', '--dir', dir]);
+        const r = run(['bridge', '--stop', '--dir', dir]);
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /no esta corriendo/i);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('cli pair: rechaza una URL invalida', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-cli-'));
+    try {
+        const r = run(['pair', 'no-es-url', '--dir', dir]);
+        assert.equal(r.status, 1);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });

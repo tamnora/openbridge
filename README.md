@@ -89,9 +89,9 @@ iniciar sesión** una vez; los chats, carpetas, túnel y push se conservan.
 | `openbridge qr` | Muestra la URL (pública o local) como QR para escanear desde el celular |
 | `openbridge tunnel` | Muestra o cambia el proveedor de túnel y su dominio fijo (`--domain`) |
 | `openbridge logs` | Logs (`--follow`, `--server`, `--bridge`) |
-| `openbridge bridge` | Corre **solo** el puente (`--api --token --id --name`) |
-| `openbridge join` | Vincula esta PC como puente de un hub (`<url> --token --id --name`) |
-| `openbridge pair` | Empareja esta PC con un **hub PHP** por código (`<url> [--id --name]`) |
+| `openbridge bridge` | Corre **solo** el puente (`--background` = segundo plano, `--stop`, `--status`) |
+| `openbridge join` | Vincula esta PC como puente de un hub (`<url> --token --id --name [--background]`) |
+| `openbridge pair` | Empareja esta PC con un **hub PHP** por código (`<url> [--id --name] [--background]`) |
 | `openbridge import` | Trae `data/` de OpenConex (`<data-dir> [--force]`) |
 | `openbridge reset` | Borra chats/datos (`--session <id>`, `--yes`) |
 | `openbridge autostart` | Arranque automático (`install`/`remove`) |
@@ -161,6 +161,15 @@ igual que OpenConex, y dejar que cada PC corra solo el puente:
 - El frontend es el mismo del hub Node (se copia, no se duplica).
 
 Guía completa (requisitos, build, subida y emparejamiento): [`docs/DEPLOY-PHP.md`](docs/DEPLOY-PHP.md).
+
+La PC corre el puente; para que siga tras cerrar la consola:
+
+```bash
+openbridge bridge --background     # arranca en segundo plano
+openbridge bridge --status         # ¿corre?
+openbridge bridge --stop           # detener
+openbridge autostart install       # arranca solo al iniciar sesión
+```
 
 ## Túnel y URL estable
 

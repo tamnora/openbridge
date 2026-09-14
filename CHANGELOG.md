@@ -4,6 +4,18 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- `openbridge bridge --background` (segundo plano; sobrevive al cierre de la
+  consola), `--stop` y `--status`. `openbridge pair`/`join` aceptan `--background`.
+
+### Corregido
+
+- `autostart` corre solo el puente cuando la PC pertenece a un hub remoto
+  (`join`/`pair`), en vez del server local.
+
 ## [0.6.0] - 2026-09-14
 
 ### Agregado

@@ -85,7 +85,17 @@ La PC muestra un codigo (ej. `ABCD-EFGH`) y espera. En la web:
 2. Ingresa el codigo.
 
 La PC recibe su **token propio**, lo guarda en `.openbridge/config.json` y arranca
-el puente. Para que arranque sola: `openbridge autostart install`.
+el puente. Para que no dependa de la consola:
+
+```bash
+openbridge pair https://openbridge.tamnora.com --name "PC 1" --background
+openbridge bridge --status     # ¿corre?
+openbridge bridge --stop       # detener
+openbridge autostart install   # arranca solo al iniciar sesion
+```
+
+(Con `--background` el puente queda en segundo plano y sobrevive al cierre de la
+consola. `autostart` corre solo el puente cuando la PC es de un hub remoto.)
 
 El admin ve **todas** las PCs; cada usuario comun ve solo las suyas. Desde
 **Dispositivos** se puede **desvincular** una PC (borra su token).
