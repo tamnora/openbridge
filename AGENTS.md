@@ -32,11 +32,14 @@ No hay linter todavia. Antes de cerrar un cambio, corre `npm test` y
 ## Mapa rapido
 
 - CLI: `src/cli.js` (comandos) · `bin/openbridge.js` (entrada)
-- Web: `src/web/server.js` (HTTP) · `src/web/routes.js` (API/paginas)
-- Auth: `src/auth.js` · Store: `src/store/index.js`
+- Web: `src/web/server.js` (HTTP) · `src/web/routes.js` (API/paginas) ·
+  `src/web/assets/app.js` (frontend) y `templates/`
+- Auth: `src/auth.js` (sesion/roles) · Config y usuarios: `src/config.js`
+- Store: `src/store/index.js` · QR: `src/qr.js`
 - Tunel: `src/tunnel/index.js` · Push: `src/push.js`
 - Puente: `src/bridge/bridge.js`
 - Docs: `docs/ARCHITECTURE.md` · Pendientes: `TODO.md`
+- Release (local): `scripts/release.mjs` (fuera del paquete npm)
 
 ## Reglas
 

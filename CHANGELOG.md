@@ -4,6 +4,26 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- **Multiusuario** con roles `admin`/`user`: login con usuario + contrasena,
+  sesion ligada al usuario y a la version de contrasena, rate limit por
+  IP+usuario, y comando CLI `users`
+  (`list`/`add`/`remove`/`passwd`/`role`/`disable`/`enable`); `passwd --user`.
+- Gate server-side: `session_delete` y los comandos mutantes del puente
+  (procesos, tuneles, revertir) solo para `admin`; la web oculta esos controles.
+- **Autor** en cada mensaje (auditoria) y muestra del usuario en el sidebar.
+- **Content-Security-Policy** y `Secure` de cookie solo desde loopback
+  (`trust proxy` explicito).
+
+### Cambiado
+
+- La sesion se invalida al cambiar la contrasena (`pv`); los usuarios
+  deshabilitados no pueden entrar.
+- `app.json` migra el `username`/`password` legado a `users[]`.
+
 ## [0.3.0] - 2026-09-13
 
 ### Cambios

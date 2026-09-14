@@ -44,9 +44,9 @@ openbridge server
 ```
 
 Al arrancar (queda en segundo plano) imprime el **estado con la URL pública**
-(`https://….tunnelmole.net/chat.php`): abríla desde el celular y logueate con el
-usuario (`admin`) y la contraseña que elegiste en `init`. Para correrlo en
-primer plano usá `openbridge server --stream`; para detenerlo, `openbridge stop`.
+(`https://….tunnelmole.net/chat.php`): abríla desde el celular y logueate con tu
+usuario y contraseña. Para correrlo en primer plano usá
+`openbridge server --stream`; para detenerlo, `openbridge stop`.
 
 ### Opciones de `init`
 
@@ -55,7 +55,8 @@ primer plano usá `openbridge server --stream`; para detenerlo, `openbridge stop
 --name "PC 1"        nombre visible de esta computadora
 --id pc1             identificador corto (default: derivado del nombre)
 --port 8799          puerto local
---password <clave>   contraseña de acceso
+--password <clave>   contraseña del admin inicial
+--user <nombre>      nombre del admin inicial (default: admin)
 --tunnel <prov>      tunnelmole | ngrok | cloudflare | none
 --domain <host>      dominio fijo del túnel (ngrok)
 --yes                sin preguntas (usa defaults)
@@ -68,7 +69,8 @@ primer plano usá `openbridge server --stream`; para detenerlo, `openbridge stop
 | Comando | Qué hace |
 |---|---|
 | `openbridge init` | Configura la casa (workspace, contraseña, túnel, puerto) |
-| `openbridge passwd` | Cambia la contraseña de acceso (detiene el server si corre) |
+| `openbridge passwd` | Cambia la contraseña de acceso (`--user <nombre>`; detiene el server si corre) |
+| `openbridge users` | Usuarios y roles: `list`, `add`, `remove`, `passwd`, `role`, `disable`, `enable` |
 | `openbridge server` | Arranca app + puente + túnel en **segundo plano** y muestra el estado (`--stream` = primer plano) |
 | `openbridge stop` | Detiene el server y su árbol de procesos |
 | `openbridge status` | Estado, URL, puente en línea y chats |
@@ -89,7 +91,7 @@ Todo vive dentro de **`.openbridge/`** en el directorio donde corrés `init`
 ```
 .openbridge/
   config.json    config del puente (apiUrl, token, workspace, bridgeId…)
-  app.json       config de la app (usuario, contraseña, VAPID, puerto, túnel)
+  app.json       config de la app (usuarios, token, VAPID, puerto, túnel)
   folders.json   lista blanca de carpetas que se ven desde el celular
   data/          sesiones, mensajes, catálogo, registro de puentes, push
   logs/          server.log y bridge.log
@@ -158,7 +160,8 @@ URL fija (ngrok con `--domain`).
   token del puente autogenerado.
 - La cookie usa `Secure` cuando el pedido llega por HTTPS **desde loopback** (el
   túnel); no se confía en `X-Forwarded-Proto` de otros orígenes.
-- Respuestas con `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y
+- Respuestas con `Content-Security-Policy` (orígenes externos, frames y objetos
+  bloqueados), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y
   `Referrer-Policy: no-referrer`.
 - El túnel es **público mientras corre**: detenelo (`openbridge stop`) cuando no
   lo uses y mantené la contraseña fuerte.
@@ -193,12 +196,13 @@ lo envió** (se ve en el chat).
 
 Proyecto en desarrollo. Ya funciona: `init`, `server` (segundo plano; `--stream`
 en primer plano), `stop`, `status`, `qr`, `tunnel`, `logs` (`--follow`), `bridge`
-(con flags), `passwd`, `import`, `reset`, `autostart`, `doctor`; login con rate
-limit; API completa y SSE; catálogo por PC; Web Push; túnel
-(TunnelMole/ngrok/cloudflare); y en la web: chat con streaming, adjuntar imagen,
-dictado por voz, plantillas de prompts, tokens/contexto y **costo** por sesión,
-vista de archivos, vista de **cambios** (git status/diff) con **revertir**,
-búsqueda global y sesiones de opencode. Tests en `npm test`.
+(con flags), `passwd`, `users`, `import`, `reset`, `autostart`, `doctor`; login
+**multiusuario** con roles `admin`/`user` y rate limit; API completa y SSE;
+catálogo por PC; Web Push; túnel (TunnelMole/ngrok/cloudflare); y en la web: chat
+con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
+tokens/contexto y **costo** por sesión, vista de archivos, vista de **cambios**
+(git status/diff) con **revertir**, búsqueda global, sesiones de opencode y
+**autor** en cada mensaje. Tests en `npm test` (28).
 
 ## Licencia
 

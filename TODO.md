@@ -7,23 +7,31 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 
 ## Estado actual (hecho)
 
-- CLI: `init`, `passwd`, `server`/`start` (segundo plano; `--stream` en primer
-  plano), `stop`, `status`, `logs` (`--follow`), `bridge` (`--api --token --id --name`),
-  `import`, `reset`, `autostart install|remove`, `doctor`, `version`, `help`.
+- CLI: `init`, `passwd` (`--user`), `users`
+  (`list`/`add`/`remove`/`passwd`/`role`/`disable`/`enable`), `server`/`start`
+  (segundo plano; `--stream`), `stop`, `status`, `qr`, `tunnel`, `logs`
+  (`--follow`), `bridge` (`--api --token --id --name`), `import`, `reset`,
+  `autostart install|remove`, `doctor`, `version`, `help`.
 - Casa portable (`paths.js`): todo en `<base>/.openbridge/` (`config.json`, `app.json`,
   `folders.json`, `data/`, `logs/`) con migración automática del layout viejo.
 - Store (`src/store/`): port de `lib.php` con mutex por archivo y escritura atómica.
-- Auth: cookie firmada, CSRF, remember-me, token del puente (scrypt), **rate limit de login**.
-- Server web (`src/web/`): router + templates, estáticos y SSE; logs reales a `logs/server.log`.
+- Auth: cookie firmada, CSRF, remember-me, **multiusuario con roles `admin`/`user`**,
+  rate limit por IP+usuario y token del puente (scrypt).
+- Server web (`src/web/`): router + templates, estáticos y SSE; **CSP** y cabeceras
+  de seguridad; logs reales a `logs/server.log`.
 - API completa compatible con `app.js` y `bridge.js`.
 - Push (`src/push.js`): VAPID + envío con `web-push`.
-- Túnel (`src/tunnel/`): `tunnelmole`, **ngrok** y **cloudflare** tras interfaz común.
+- Túnel (`src/tunnel/`): `tunnelmole`, **ngrok** y **cloudflare** tras interfaz común;
+  `openbridge tunnel` y `init --domain`.
+- QR propio (`src/qr.js`, sin dependencias): en `init`/`status`/`server` y `openbridge qr`.
 - `bridge.js` parametrizado para la casa portable, con overrides por entorno.
-- Tests (`node --test`): smoke, auth, API, `safeJoinWorkspace` y migración (15/15).
-  CI Windows/Linux/macOS.
+- Tests (`node --test`): **28/28** (smoke, auth/roles, API, QR, release,
+  `safeJoinWorkspace`, migración). CI Windows/Linux/macOS.
+- Release privado (`scripts/release.mjs`): guard de dueño, semver/prerelease y dist-tags.
+- Web: chat con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
+  tokens/contexto y **costo**, archivos, **cambios** (git status/diff) con **revertir**,
+  búsqueda global, sesiones de opencode y **autor** en cada mensaje.
 - `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `AGENTS.md`, README, LICENSE, `.gitignore`.
-- Verificado: `init`+`doctor`, `server` (segundo plano + status), login, `chat.php`,
-  `bootstrap`, SSE por túnel real y `ping` público. Nombre npm `openbridge` **libre**.
 
 ---
 
@@ -38,7 +46,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] `logs --follow` y `logs --bridge`/`--server`.
 - [x] Mensaje claro cuando el **puerto está ocupado**.
 - [x] Guard de **Node < 18** con mensaje amigable.
-- [x] **Login solo con contrasena** (sin campo de usuario).
+- [x] ~~**Login solo con contrasena**~~: se volvio a **usuario + contrasena** al sumar multiusuario.
 - [x] Ver **tokens consumidos y capacidad de contexto** por sesion (sidebar, encabezado, statusbar y franja de trabajo).
 - [x] Indicador **KITT** con bordes y estela luminosa.
 - [x] **Dictado por voz** en el compositor (Web Speech API; se oculta si el navegador no la soporta).
@@ -58,7 +66,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   - [ ] TunnelMole con subdominio pago, o autoalbergar `tunnelmole-service`.
 - [x] Proveedores de túnel enchufables: `tunnelmole`, `ngrok`, `cloudflare`.
 - [x] `openbridge tunnel` (estado/cambio de proveedor) y guardar el dominio en `app.json`; `init --domain`.
-- [ ] Re-suscripción push automática cuando cambia la URL.
+- [x] Re-suscripción push automática al reabrir la app en la URL nueva (`pushSync`).
 - [x] `trust proxy` explícito: la cookie usa `Secure` con `X-Forwarded-Proto` solo desde loopback.
 
 ## 3. CLI / ciclo de vida
@@ -86,7 +94,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 
 ## 6. Seguridad
 
-- [x] **Rate limit / lockout** en login (5 intentos, 15 min).
+- [x] **Rate limit / lockout** en login (5 intentos, 15 min **por IP+usuario**).
+- [x] **Multiusuario** con roles `admin`/`user` y gate server-side de las acciones sensibles.
 - [x] Advertir en la consola que el túnel es **público mientras corre**.
 - [x] Revisar cookies (`HttpOnly`, `SameSite`, `Secure` detrás del túnel).
 - [x] Bind solo a `127.0.0.1` (default) y no exponer LAN.
@@ -96,7 +105,9 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 ## 7. Pruebas / calidad
 
 - [x] Tests de rutas/API con `node:test` + `http` (login, sessions, send, bootstrap, CSRF).
-- [x] Tests de auth (firma de cookie, expiración, CSRF, rate limit, token del puente).
+- [x] Tests de auth (firma de cookie, expiración, CSRF, `pv`/disabled, rate limit por IP+usuario, token del puente).
+- [x] Tests de **roles** (`user` recibe 403 al borrar/correr) y de **migración** del admin legado.
+- [x] Tests del generador **QR** (ida y vuelta) y de la lógica de **release**.
 - [x] Test de seguridad de `safeJoinWorkspace`.
 - [ ] Test end-to-end con opencode (mockeando el CLI).
 - [ ] `npm run lint` (a definir; hoy no hay linter).
@@ -127,7 +138,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 ### Cómo probar en el celular (cuando haya workspace con carpetas)
 
 1. En la PC: `openbridge init` (elegir workspace con proyectos) y `openbridge server`.
-2. Copiar la **URL pública** del status y abrirla en el celular.
-3. Loguearse con el usuario (`admin`) y la contraseña elegida en `init`.
+2. Copiar la **URL pública** del status (o escanear el QR) y abrirla en el celular.
+3. Loguearse con **usuario y contraseña** (el admin creado en `init`).
 4. Tocar **+ nueva sesión** → elegir carpeta, modelo y agente → escribir y enviar.
 5. Ver la respuesta (streaming) y probar **detener**; opcional: instalar la PWA y activar 🔔.
