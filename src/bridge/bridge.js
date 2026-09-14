@@ -1700,10 +1700,24 @@ function tunnelSpawn(port, onLine, onFail, onUrls, triedNpx = false) {
         return;
     }
     const args = (spec.pre || []).concat(triedNpx ? ['--yes', 'tunnelmole', String(port)] : [String(port)]);
+    let settled = false;
+    // Si `tmole` existe pero falla (shim roto, sin PATH, etc.), reintentamos con
+    // `npx --yes tunnelmole` en vez de darnos por vencidos.
+    const retryNpx = () => {
+        if (settled) return;
+        settled = true;
+        log('túnel: tmole falló, reintentando con npx tunnelmole…');
+        tunnelSpawn(port, onLine, onFail, onUrls, true);
+    };
     let proc;
     try {
-        proc = spawn(spec.bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        proc = spawn(spec.bin, args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+            windowsVerbatimArguments: !!spec.verbatim,
+        });
     } catch (e) {
+        if (!triedNpx) { retryNpx(); return; }
         onFail('no se pudo iniciar tunnelmole (' + e.message + '). Instalalo con: npm i -g tunnelmole');
         return;
     }
@@ -1711,14 +1725,17 @@ function tunnelSpawn(port, onLine, onFail, onUrls, triedNpx = false) {
     const feed = (d) => {
         buf += String(d);
         const urls = parseTunnelUrls(buf);
-        if (urls.https || urls.http) onUrls(urls);
+        if (urls.https || urls.http) { settled = true; onUrls(urls); }
     };
     proc.stdout.on('data', feed);
     proc.stderr.on('data', feed);
     proc.on('error', (e) => {
+        if (!triedNpx) { retryNpx(); return; }
         onFail('no se pudo iniciar tunnelmole (' + e.message + '). Instalalo con: npm i -g tunnelmole');
     });
     proc.on('exit', (code) => {
+        if (settled) return;
+        if (!triedNpx) { retryNpx(); return; }
         onFail('tmole terminó (código ' + code + ')' + (buf ? ': ' + buf.slice(0, 160).trim() : ''));
     });
     onLine(proc);
@@ -1756,10 +1773,10 @@ async function tunnelStart(cmd) {
     };
     entry = { port, proc: null, urls: { https: '', http: '' }, startedAt: Date.now() };
     tunnels.set(port, entry);
-    // 60 s: con el fallback de npx, la primera vez descarga tunnelmole.
+    // 85 s: con el fallback de npx, la primera vez descarga tunnelmole.
     timer = setTimeout(() => {
-        finish(false, 'tunnelmole no devolvió URLs (60 s). ¿Está instalado? npm i -g tunnelmole');
-    }, 60000);
+        finish(false, 'tunnelmole no devolvió URLs (85 s). ¿Está instalado? npm i -g tunnelmole');
+    }, 85000);
     tunnelSpawn(
         port,
         (proc) => { entry.proc = proc; },
@@ -1913,7 +1930,9 @@ function procResolveBin(token, allowSet) {
     const found = procFindOnPath(bare);
     if (!found) throw new Error('no se encontró "' + token + '" en el PATH');
     if (found.ext.toLowerCase() === '.exe') return { bin: found.p, pre: [] };
-    return { bin: 'cmd.exe', pre: ['/d', '/s', '/c', '"' + found.p + '"'] };
+    // Shim .cmd/.bat: se ejecuta con cmd.exe. `verbatim` evita que Node vuelva a
+    // citar el argumento (que ya viene entre comillas) y cmd reciba "\"ruta\"".
+    return { bin: 'cmd.exe', pre: ['/d', '/s', '/c', '"' + found.p + '"'], verbatim: true };
 }
 
 async function procDone(cmd, ok, payload, error) {
@@ -2000,6 +2019,7 @@ async function procStart(cmd) {
             stdio: ['ignore', 'pipe', 'pipe'],
             env: process.env,
             windowsHide: true,
+            windowsVerbatimArguments: !!spec.verbatim,
         });
     } catch (e) {
         await procDone(cmd, false, null, 'no se pudo iniciar: ' + e.message);

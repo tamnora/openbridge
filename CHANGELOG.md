@@ -4,6 +4,16 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Corregido
+
+- **Tunel en Windows**: los shims `.cmd` (p. ej. `tmole`) se lanzaban con doble
+  cita (`cmd.exe /d /s /c "\"ruta\""`) y fallaban con "no se reconoce como un
+  comando". Ahora se usa `windowsVerbatimArguments` y, si `tmole` falla, el
+  puente **reintenta con `npx --yes tunnelmole`** (antes solo lo intentaba si
+  `tmole` no estaba en el PATH). Timeout del tunel: 85 s.
+
 ## [0.6.1] - 2026-09-14
 
 ### Agregado
