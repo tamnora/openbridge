@@ -540,6 +540,7 @@ function streamCli(args, opts, onPartial) {
         let settled = false;
         let timer = null;
         let sessionID = null;
+        let assistantMsgID = null;
         let errorText = '';
         const texts = [];
         const reasons = [];
@@ -577,6 +578,7 @@ function streamCli(args, opts, onPartial) {
                 killed: false,
                 canceled: false,
                 sessionID: sessionID,
+                assistantMsgID: assistantMsgID,
                 errorText: errorText,
             }, extra || {});
         }
@@ -636,6 +638,9 @@ function streamCli(args, opts, onPartial) {
             if (ev.part && typeof ev.part.text === 'string') {
                 if (ev.type === 'text') texts.push(ev.part.text);
                 else if (ev.type === 'reasoning') reasons.push(ev.part.text);
+                // Id del mensaje de opencode (msg_...): identifica la respuesta
+                // para que el hub no la duplique al importar del TUI.
+                if (typeof ev.messageID === 'string' && ev.messageID) assistantMsgID = ev.messageID;
             }
             if (ev.type === 'error') {
                 errorText = errorMessage(ev);
@@ -1369,6 +1374,7 @@ async function exportAndImport(folder, sess, target) {
             ts: ts,
             agent: role === 'assistant' ? lastAgent : (info.agent || ''),
         };
+        if (info.id) out.oc_msg = String(info.id);
         if (reasoning) out.reasoning = reasoning;
         msgs.push(out);
     }
@@ -1447,18 +1453,27 @@ async function sweepTarget(t, opts) {
         if (!sessions.length) continue;
         const fstate = target.folders[folder] || (target.folders[folder] = {});
         for (const s of sessions) {
-            if (fstate[s.id] === s.updated) { seen.add(s.id); continue; } // sin cambios desde el último barrido
+            // Sin cambios desde el último barrido (el marcador es el "updated"
+            // de la lista, con precision de minuto). Con `force` (watcher) se
+            // re-exportan las sesiones tocadas en los últimos 30 min para no
+            // perder cambios dentro del mismo minuto.
+            const unchanged = fstate[s.id] === s.updated;
+            const forceRecent = !!(opts && opts.force) && listUpdatedRecent(s.updated, 30 * 60 * 1000);
+            if (unchanged && !forceRecent) { seen.add(s.id); continue; }
             if (seen.has(s.id)) { fstate[s.id] = s.updated; continue; } // ya atendida en esta pasada
             seen.add(s.id);
             if (knownOc.includes(s.id)) {
-                // Chat web vinculado: no se importa (sería duplicar), solo se
-                // refrescan tokens/costo desde el export de opencode.
+                // Chat web vinculado: el hub ya tiene lo que publicó la web,
+                // pero el TUI puede haber agregado mensajes. Se importa igual
+                // (el merge deduplica por oc_msg) y el hub lo marca `importada`,
+                // con lo que sale de known_oc y sigue sincronizando.
                 try {
-                    await refreshTokens(folder, s, t);
+                    await exportAndImport(folder, s, t);
                     fstate[s.id] = s.updated;
                     saveSyncState();
+                    imported++;
                 } catch (e) {
-                    log('aviso: no pude refrescar tokens de ' + s.id + ': ' + e.message);
+                    log('aviso: no pude sincronizar ' + s.id + ': ' + e.message);
                 }
                 continue;
             }
@@ -1494,6 +1509,61 @@ async function sweepTarget(t, opts) {
         log('barrido de sesiones (' + t + '): ' + imported + ' importada(s)');
     }
     return imported;
+}
+
+// ---------------------------------------------------------------------------
+// Sincronizacion casi en tiempo real. opencode persiste en su base SQLite
+// (opencode.db / -wal / -shm); un watcher liviano mira mtime+tamano y dispara
+// un barrido tras un periodo de calma, en vez de esperar 15 min.
+// ---------------------------------------------------------------------------
+let sweepPending = false;
+let lastSweepAt = 0;
+
+function scheduleSweep(reason) {
+    if (busy || sweepRunning) { sweepPending = true; return; }
+    if (Date.now() - lastSweepAt < 30000) { sweepPending = true; return; }
+    lastSweepAt = Date.now();
+    syncSessions({ silent: true, force: reason === 'watcher' }).catch(handleError);
+}
+
+function opencodeDataDirs() {
+    const dirs = [];
+    if (process.env.XDG_DATA_HOME) dirs.push(path.join(process.env.XDG_DATA_HOME, 'opencode'));
+    dirs.push(path.join(os.homedir(), '.local', 'share', 'opencode'));
+    dirs.push(path.join(os.homedir(), 'AppData', 'Local', 'opencode'));
+    return dirs;
+}
+function opencodeDbSignature() {
+    let sig = '';
+    for (const d of opencodeDataDirs()) {
+        for (const f of ['opencode.db', 'opencode.db-wal', 'opencode.db-shm']) {
+            try {
+                const st = fs.statSync(path.join(d, f));
+                sig += f + ':' + Math.round(st.mtimeMs) + ':' + st.size + ';';
+            } catch (e) { /* no existe en esa ruta */ }
+        }
+    }
+    return sig;
+}
+// `updated` de `session list` es "HH:MM · D/M/YYYY" (precision de minuto).
+function listUpdatedRecent(updated, windowMs) {
+    const m = String(updated || '').match(/^(\d{1,2}):(\d{2})\s*·\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (!m) return false;
+    const ts = new Date(Number(m[5]), Number(m[4]) - 1, Number(m[3]), Number(m[1]), Number(m[2])).getTime();
+    return ts > 0 && (Date.now() - ts) <= windowMs;
+}
+function startSyncWatcher() {
+    let last = opencodeDbSignature();
+    let timer = null;
+    setInterval(() => {
+        const sig = opencodeDbSignature();
+        if (sig === '' || sig === last) return;
+        last = sig;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => scheduleSweep('watcher'), 8000);
+    }, 4000);
+    // Respaldo por si el watcher no ve el cambio (otra ruta o filesystem).
+    setInterval(() => scheduleSweep('periodico'), 3 * 60 * 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -2321,6 +2391,7 @@ async function tick(opts) {
                 text: r.text,
                 reasoning: r.reasoning || '',
                 opencode_session: r.opencodeSession || '',
+                oc_msg: r.assistantMsgID || '',
                 canceled: !!r.canceled,
             };
             try {
@@ -2354,6 +2425,9 @@ async function tick(opts) {
         activeMsgTarget = null;
         busy = false;
         for (const t of involvedTargets) notifyBusy(t, null);
+        // El watcher pudo pedir un barrido mientras opencode estaba ocupado:
+        // se corre ahora que terminó (en vez de perderse).
+        if (sweepPending) { sweepPending = false; scheduleSweep('pendiente'); }
     }
     return 'trabajo';
 }
@@ -2416,8 +2490,7 @@ process.on('SIGINT', () => {
     // Historial único: primer poll hecho (lastKnownOc cargado), importamos
     // en segundo plano y repetimos cada 15 minutos.
     syncSessions().catch(handleError);
-    setInterval(() => {
-        if (!busy && !sweepRunning) syncSessions({ silent: true }).catch(handleError);
-    }, 15 * 60 * 1000);
+    // Watcher de la base de opencode: sincroniza en segundos, no cada 15 min.
+    startSyncWatcher();
     scheduleTick(POLL_QUICK_MS);
 })();

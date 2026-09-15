@@ -25,9 +25,9 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   `openbridge tunnel` y `init --domain`.
 - QR propio (`src/qr.js`, sin dependencias): en `init`/`status`/`server` y `openbridge qr`.
 - `bridge.js` parametrizado para la casa portable, con overrides por entorno.
-- Tests (`node --test`): **35/35** (smoke, auth/roles, API, QR, release, bridge
-  end-to-end con opencode mockeado, CLI, `safeJoinWorkspace`, migración, hub PHP
-  end-to-end con `php -S`). CI Windows/Linux/macOS.
+- Tests (`node --test`): **40/40** (smoke, auth/roles, API, QR, release, bridge
+  end-to-end con opencode mockeado, CLI, store/import, `safeJoinWorkspace`,
+  migración, hub PHP end-to-end con `php -S`). CI Windows/Linux/macOS.
 - Release privado (`scripts/release.mjs`): guard de dueño, semver/prerelease y dist-tags.
 - Web: chat con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
   tokens/contexto y **costo**, archivos, **cambios** (git status/diff) con **revertir**,
@@ -83,6 +83,15 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [ ] **Desplegar** en cPanel (subdominio + SSL, subir `php/dist`, `data/` 0755/0775)
       y emparejar las PCs reales. Confirmar que el hosting tenga `sodium`.
 - [ ] Backport del pairing/dueno al hub Node (paridad; hoy solo PHP).
+
+## 2d. Sincronizacion (historial unico)
+
+- [x] Watcher de `opencode.db`/`-wal` para barrer a los segundos (no cada 15 min).
+- [x] El barrido no se pierde si opencode esta ocupado (`sweepPending`).
+- [x] Importar mensajes del TUI tambien en sesiones creadas desde la web.
+- [x] Dedupe por `oc_msg` (id de mensaje de opencode) + adopcion del optimista
+      de la web, en el hub PHP y Node.
+- [ ] Validar en uso real la latencia TUI -> hub y el caso web+TUI.
 
 ## 3. CLI / ciclo de vida
 

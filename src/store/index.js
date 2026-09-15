@@ -198,9 +198,14 @@ async function sessionImport(ocSession, name, folder, model, agent, updatedTs, m
     let added = 0;
     await jsonfile.update(paths.messagesFile(sid), { messages: [], nextId: 1 }, (data) => {
         const known = {};
-        for (const m of data.messages) {
+        const knownOc = {};
+        const byText = {};
+        data.messages.forEach((m, i) => {
             known[String(m.role || '') + '|' + String(m.ts || '') + '|' + md5(mbSubstr(m.text || '', 0, 400))] = true;
-        }
+            const ocId = String(m.oc_msg || '').trim();
+            if (ocId !== '') knownOc[ocId] = true;
+            else byText[String(m.role || '') + '|' + md5(mbSubstr(String(m.text || '').trim(), 0, 400))] = i;
+        });
         for (const m of (Array.isArray(messages) ? messages : [])) {
             if (!m || typeof m !== 'object') continue;
             const role = String(m.role || '');
@@ -210,12 +215,29 @@ async function sessionImport(ocSession, name, folder, model, agent, updatedTs, m
             if (Array.from(text).length > 50000) text = mbSubstr(text, 0, 50000);
             let ts = String(m.ts || '');
             if (ts === '' || isNaN(Date.parse(ts))) ts = nowIso();
+            const ocMsg = String(m.oc_msg || '').trim();
+            // Identidad de opencode: si ya esta, es el mismo mensaje.
+            if (ocMsg !== '' && knownOc[ocMsg]) continue;
             const key = role + '|' + ts + '|' + md5(mbSubstr(text, 0, 400));
             if (known[key]) continue;
+            // Adopcion: llego de opencode (con oc_msg) y existe uno de la web
+            // con el mismo rol+texto y sin id. Se le asigna el id.
+            if (ocMsg !== '') {
+                const tk = role + '|' + md5(mbSubstr(text, 0, 400));
+                if (byText[tk] !== undefined) {
+                    data.messages[byText[tk]].oc_msg = ocMsg;
+                    knownOc[ocMsg] = true;
+                    known[key] = true;
+                    delete byText[tk];
+                    continue;
+                }
+            }
             known[key] = true;
+            if (ocMsg !== '') knownOc[ocMsg] = true;
             const id = data.nextId;
             data.nextId = id + 1;
             const msg = { id, role, text, ts, status: 'done' };
+            if (ocMsg !== '') msg.oc_msg = ocMsg;
             const reasoning = String(m.reasoning || '').trim();
             if (reasoning !== '') msg.reasoning = Array.from(reasoning).length > 50000 ? mbSubstr(reasoning, 0, 50000) : reasoning;
             if (m.agent) msg.agent = mbSubstr(String(m.agent), 0, 40);

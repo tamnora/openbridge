@@ -4,6 +4,24 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- **Sincronizacion casi en tiempo real**: el puente vigila la base de opencode
+  (`opencode.db`/`-wal`) y dispara un barrido tras ~8 s de calma, en vez de
+  esperar 15 min (que queda como respaldo cada 3 min).
+
+### Corregido
+
+- El barrido ya **no se pierde** cuando opencode esta ocupado: se marca pendiente
+  y corre al terminar el mensaje (antes se salteaba el tick entero).
+- **Mensajes del TUI en sesiones web**: las sesiones vinculadas a la web ya no
+  quedan solo con refresco de tokens; se importan los mensajes nuevos.
+- **Sin duplicados**: el merge deduplica por el id de mensaje de opencode
+  (`oc_msg`) y "adopta" el mensaje optimista que publico la web. Paridad en el
+  hub Node (`store.sessionImport`) y en el PHP.
+
 ## [0.6.2] - 2026-09-14
 
 ### Corregido

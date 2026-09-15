@@ -145,6 +145,16 @@ Ejemplo concreto:
 El puente remoto solo necesita salida a internet hacia el hub; no abre puertos ni
 túnel propio. Para que arranque solo en cada PC: `openbridge autostart install`.
 
+## Sincronización (opencode es la fuente)
+
+La conversación vive en **opencode** (tu PC); la web la refleja. Los mensajes que
+pasás por la web se guardan al instante; los que hacés en el **TUI de opencode**
+se importan por un barrido que ahora corre **casi en tiempo real**: el puente
+vigila la base de opencode (`opencode.db`) y sincroniza a los pocos segundos
+(respaldo cada 3 min). Si la sesión empezó en la web y la seguís en el TUI (o al
+revés), los mensajes nuevos se agregan sin duplicarse: el merge identifica cada
+mensaje por su id de opencode (`oc_msg`).
+
 ## Hub en hosting PHP (URL fija, sin túnel)
 
 Además del hub Node, OpenBridge puede correr su hub en un **hosting PHP** (cPanel),

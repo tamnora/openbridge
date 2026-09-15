@@ -564,8 +564,17 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
     }
     $data = messages_read($sid, $mfp);
     $known = [];
-    foreach ($data['messages'] as $m) {
+    $knownOc = [];
+    $byText = [];
+    foreach ($data['messages'] as $i => $m) {
         $known[(string)($m['role'] ?? '') . '|' . (string)($m['ts'] ?? '') . '|' . md5(mb_substr((string)($m['text'] ?? ''), 0, 400))] = true;
+        $oc = trim((string)($m['oc_msg'] ?? ''));
+        if ($oc !== '') {
+            $knownOc[$oc] = true;
+        } else {
+            // Candidato a "adopción": mensaje optimista de la web (sin id de opencode).
+            $byText[(string)($m['role'] ?? '') . '|' . md5(mb_substr(trim((string)($m['text'] ?? '')), 0, 400))] = $i;
+        }
     }
     $added = 0;
     foreach ((array)$messages as $m) {
@@ -577,9 +586,25 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
         if (mb_strlen($text) > 50000) $text = mb_substr($text, 0, 50000);
         $ts = (string)($m['ts'] ?? '');
         if ($ts === '' || !@strtotime($ts)) $ts = gmdate('c');
+        $ocMsg = trim((string)($m['oc_msg'] ?? ''));
+        // Identidad de opencode: si ya está, es el mismo mensaje.
+        if ($ocMsg !== '' && isset($knownOc[$ocMsg])) continue;
         $key = $role . '|' . $ts . '|' . md5(mb_substr($text, 0, 400));
         if (isset($known[$key])) continue;
+        // Adopción: llegó de opencode (con oc_msg) y existe uno de la web con
+        // el mismo rol+texto y sin id. Se le asigna el id en vez de duplicar.
+        if ($ocMsg !== '') {
+            $tk = $role . '|' . md5(mb_substr($text, 0, 400));
+            if (isset($byText[$tk])) {
+                $data['messages'][$byText[$tk]]['oc_msg'] = $ocMsg;
+                $knownOc[$ocMsg] = true;
+                $known[$key] = true;
+                unset($byText[$tk]);
+                continue;
+            }
+        }
         $known[$key] = true;
+        if ($ocMsg !== '') $knownOc[$ocMsg] = true;
         $id = $data['nextId'];
         $data['nextId'] = $id + 1;
         $msg = [
@@ -589,6 +614,9 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
             'ts' => $ts,
             'status' => 'done',
         ];
+        if ($ocMsg !== '') {
+            $msg['oc_msg'] = $ocMsg;
+        }
         $reasoning = trim((string)($m['reasoning'] ?? ''));
         if ($reasoning !== '') {
             $msg['reasoning'] = mb_strlen($reasoning) > 50000 ? mb_substr($reasoning, 0, 50000) : $reasoning;

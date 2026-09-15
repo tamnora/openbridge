@@ -627,6 +627,7 @@ async function handleApi(ctx) {
             const userId = parseInt(body.user_id, 10) || 0;
             const text = String(body.text || '').trim();
             const reasoning = String(body.reasoning || '').trim();
+            const ocMsg = String(body.oc_msg || '').trim();
             if (sid <= 0 || userId <= 0) return ok({ ok: false, error: 'session_id y user_id son obligatorios' }, 400);
             if (Array.from(text).length > 50000 || Array.from(reasoning).length > 50000) return ok({ ok: false, error: 'Respuesta demasiado larga' }, 400);
             if (text === '' && reasoning === '') return ok({ ok: false, error: 'Nada para publicar' }, 400);
@@ -639,6 +640,7 @@ async function handleApi(ctx) {
                 if (draftIdx >= 0) {
                     data.messages[draftIdx].text = text;
                     if (reasoning !== '') data.messages[draftIdx].reasoning = reasoning;
+                    if (ocMsg !== '') data.messages[draftIdx].oc_msg = ocMsg;
                     data.messages[draftIdx].ts = store.nowIso();
                 } else {
                     const aid = data.nextId;
@@ -648,6 +650,7 @@ async function handleApi(ctx) {
                         draft_for: userId, agent: store.messageAgentOf(data, userId),
                     };
                     if (reasoning !== '') draft.reasoning = reasoning;
+                    if (ocMsg !== '') draft.oc_msg = ocMsg;
                     data.messages.push(draft);
                 }
             });
@@ -664,6 +667,7 @@ async function handleApi(ctx) {
             if (!exists) return ok({ ok: false, error: 'Sesion no encontrada' }, 404);
             const oc = body.opencode_session ? String(body.opencode_session).trim() : '';
             const reasoning = String(body.reasoning || '').trim();
+            const ocMsg = String(body.oc_msg || '').trim();
             const clearSession = !!body.clear_session;
             const canceled = !!body.canceled;
             await store.sessionsUpdate((sd) => {
@@ -706,6 +710,7 @@ async function handleApi(ctx) {
                     m.answered_ts = store.nowIso();
                     m.ts = store.nowIso();
                     if (reasoning !== '') m.reasoning = reasoning; else delete m.reasoning;
+                    if (ocMsg !== '') m.oc_msg = ocMsg;
                     if (canceled) m.canceled = true; else delete m.canceled;
                     if (!m.agent) m.agent = store.messageAgentOf(data, userId, (sess && sess.agent) || '');
                     if (author && !m.author) m.author = author;
@@ -715,6 +720,7 @@ async function handleApi(ctx) {
                     data.nextId = aid + 1;
                     const nm = { id: aid, role: 'assistant', text, ts: store.nowIso(), status: 'done', agent: store.messageAgentOf(data, userId, (sess && sess.agent) || '') };
                     if (reasoning !== '') nm.reasoning = reasoning;
+                    if (ocMsg !== '') nm.oc_msg = ocMsg;
                     if (canceled) nm.canceled = true;
                     if (author) nm.author = author;
                     data.messages.push(nm);

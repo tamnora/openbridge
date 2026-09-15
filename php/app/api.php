@@ -803,6 +803,7 @@ if ($action === 'respond_partial') {
     $userId = (int)($body['user_id'] ?? 0);
     $text = trim((string)($body['text'] ?? ''));
     $reasoning = trim((string)($body['reasoning'] ?? ''));
+    $ocMsg = trim((string)($body['oc_msg'] ?? ''));
     if ($sid <= 0 || $userId <= 0) {
         json_response(['ok' => false, 'error' => 'session_id y user_id son obligatorios'], 400);
     }
@@ -823,6 +824,7 @@ if ($action === 'respond_partial') {
     if ($draftIdx >= 0) {
         $data['messages'][$draftIdx]['text'] = $text;
         if ($reasoning !== '') $data['messages'][$draftIdx]['reasoning'] = $reasoning;
+        if ($ocMsg !== '') $data['messages'][$draftIdx]['oc_msg'] = $ocMsg;
         $data['messages'][$draftIdx]['ts'] = gmdate('c');
     } else {
         $aid = $data['nextId'];
@@ -837,6 +839,7 @@ if ($action === 'respond_partial') {
             'agent' => message_agent_of($data, $userId),
         ];
         if ($reasoning !== '') $draft['reasoning'] = $reasoning;
+        if ($ocMsg !== '') $draft['oc_msg'] = $ocMsg;
         $data['messages'][] = $draft;
     }
     messages_save($data, $mfp);
@@ -874,6 +877,7 @@ if ($action === 'respond') {
     }
     $oc = isset($body['opencode_session']) ? trim((string)$body['opencode_session']) : '';
     $reasoning = trim((string)($body['reasoning'] ?? ''));
+    $ocMsg = trim((string)($body['oc_msg'] ?? ''));
     $clearSession = !empty($body['clear_session']);
     if ($clearSession) {
         $sdata['sessions'][$sidIdx]['opencode_session'] = null;
@@ -930,6 +934,7 @@ if ($action === 'respond') {
         } else {
             unset($data['messages'][$draftIdx]['reasoning']);
         }
+        if ($ocMsg !== '') $data['messages'][$draftIdx]['oc_msg'] = $ocMsg;
         if ($canceled) {
             $data['messages'][$draftIdx]['canceled'] = true;
         } else {
@@ -951,6 +956,7 @@ if ($action === 'respond') {
             'agent' => message_agent_of($data, $userId, (string)($sdata['sessions'][$sidIdx]['agent'] ?? '')),
         ];
         if ($reasoning !== '') $newMsg['reasoning'] = $reasoning;
+        if ($ocMsg !== '') $newMsg['oc_msg'] = $ocMsg;
         if ($canceled) {
             $newMsg['canceled'] = true;
         }
