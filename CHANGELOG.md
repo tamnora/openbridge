@@ -4,6 +4,14 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Cambiado
+
+- **Color por proyecto** en la lista de sesiones y en el sidebar (hash estable
+  de la ruta) para distinguir los proyectos de un vistazo, y nombre un poco mas
+  grande.
+
 ## [0.6.3] - 2026-09-15
 
 ### Agregado
