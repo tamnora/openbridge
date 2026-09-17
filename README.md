@@ -155,6 +155,40 @@ vigila la base de opencode (`opencode.db`) y sincroniza a los pocos segundos
 revés), los mensajes nuevos se agregan sin duplicarse: el merge identifica cada
 mensaje por su id de opencode (`oc_msg`).
 
+## Panel del proyecto y dev run (escritorio)
+
+En pantallas de escritorio la app muestra un **panel derecho** (botón `▥` en el
+encabezado; se puede colapsar y ajustar el ancho) con dos pestañas:
+
+- **estructura**: árbol de carpetas y archivos del proyecto de la sesión abierta;
+  al tocar un archivo se abre en el visor. Se oculta en el celular.
+- **preview**: embebe el dev server en un `iframe`. Si el navegador está en la
+  misma PC/LAN que el puente usa `http://127.0.0.1:<puerto>`; si estás remoto, el
+  botón **túnel** levanta un TunnelMole y embebe esa URL.
+
+Para arrancar el server de desarrollo, la vista **procs** detecta cómo correr
+cada proyecto (`proc_detect`): mira `package.json` (scripts `dev`/`start`/`serve`/
+`preview`), `composer.json`/`artisan` y entrypoints PHP (`public/index.php`,
+`backend/public/index.php`, `index.php`), y ofrece los comandos como chips.
+Recuerda el último comando usado por carpeta.
+
+El puente solo ejecuta binarios permitidos en `bridge/config.json`:
+
+```json
+{
+  "processes": {
+    "enabled": true,
+    "allow": ["npm", "node", "npx", "php", "python", "composer"],
+    "bins": { "php": "C:\\xampp\\php\\php.exe" }
+  }
+}
+```
+
+`allow` es la lista blanca (las instalaciones nuevas ya traen `php`/`python`/
+`composer`; si actualizás una vieja, agregalos a mano). `bins` mapea un nombre a
+una ruta absoluta cuando el ejecutable **no** está en el `PATH`. Los comandos
+corren **sin shell** y con `cwd` dentro del workspace.
+
 ## Hub en hosting PHP (URL fija, sin túnel)
 
 Además del hub Node, OpenBridge puede correr su hub en un **hosting PHP** (cPanel),
@@ -219,8 +253,9 @@ puente, así que refleja la configuración de opencode de esa computadora.
   token del puente autogenerado.
 - La cookie usa `Secure` cuando el pedido llega por HTTPS **desde loopback** (el
   túnel); no se confía en `X-Forwarded-Proto` de otros orígenes.
-- Respuestas con `Content-Security-Policy` (orígenes externos, frames y objetos
-  bloqueados), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y
+- Respuestas con `Content-Security-Policy` (orígenes externos, objetos y
+  `frame-ancestors` bloqueados; `frame-src` permite embeber la vista previa del
+  dev server), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` y
   `Referrer-Policy: no-referrer`.
 - El túnel es **público mientras corre**: detenelo (`openbridge stop`) cuando no
   lo uses y mantené la contraseña fuerte.
@@ -259,9 +294,10 @@ en primer plano), `stop`, `status`, `qr`, `tunnel`, `logs` (`--follow`), `bridge
 **multiusuario** con roles `admin`/`user` y rate limit; API completa y SSE;
 catálogo por PC; Web Push; túnel (TunnelMole/ngrok/cloudflare); y en la web: chat
 con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
-tokens/contexto y **costo** por sesión, vista de archivos, vista de **cambios**
-(git status/diff) con **revertir**, búsqueda global, sesiones de opencode y
-**autor** en cada mensaje. Tests en `npm test` (28).
+tokens/contexto y **costo** por sesión, vista de archivos, **panel derecho** de
+estructura y vista previa (escritorio), **procs** con detección de dev run por
+proyecto, vista de **cambios** (git status/diff) con **revertir**, búsqueda global,
+sesiones de opencode y **autor** en cada mensaje. Tests en `npm test` (40).
 
 ## Licencia
 

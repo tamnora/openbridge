@@ -29,9 +29,9 @@ el estado); `--stream` lo deja en primer plano.
 | `src/tunnel/` | Proveedores de tunel enchufables. |
 | `src/web/server.js` | Servidor HTTP, estaticos, cabeceras de seguridad (CSP). |
 | `src/web/routes.js` | Router de paginas y API (`?action=...`), gate de roles, compatible con `app.js`/`bridge.js`. |
-| `src/web/assets/` | Frontend (`app.js`, temas, iconos, service worker, manifest). |
+| `src/web/assets/` | Frontend (`app.js`, temas, iconos, service worker, manifest), panel derecho (estructura/preview). |
 | `src/store/` | Store JSON con mutex por archivo y escritura atomica. |
-| `src/bridge/bridge.js` | Puente: sincroniza catalogo, hace poll y ejecuta opencode; comandos fs/proc/tunel/git. |
+| `src/bridge/bridge.js` | Puente: sincroniza catalogo, hace poll y ejecuta opencode; comandos fs/proc/tunel/git y deteccion de dev run (`proc_detect`). |
 | `scripts/release.mjs` | Release local (fuera del paquete npm): version, changelog, tag, push y publish. |
 
 ## Casa portable
@@ -96,13 +96,20 @@ resuelve (los resultados vuelven por `command_done`/`fs_result`). Sirve tanto en
 local como en remoto:
 
 - Lectura: `models`, `session_list`, `session_info`, `opencode_version`,
-  `fs_list`, `fs_read`, `proc_list`, `proc_log`, `tunnel_list`, `git_status`,
-  `git_diff`.
+  `fs_list`, `fs_read`, `proc_list`, `proc_log`, `proc_detect`, `tunnel_list`,
+  `git_status`, `git_diff`.
 - Mutantes (solo `admin`): `proc_start`, `proc_stop`, `tunnel_start`,
   `tunnel_stop`, `git_checkout`.
 
 Las rutas se validan contra el workspace (`procResolveFolder`/`resolveInWorkspace`)
-y los argumentos con una whitelist (`OC_ALLOWED`).
+y los argumentos con una whitelist (`OC_ALLOWED`). `proc_detect` es read-only:
+inspecciona el proyecto (`package.json`, `composer.json`/`artisan`, entrypoints
+PHP) y devuelve los comandos sugeridos para correrlo en dev.
+
+`proc_start` solo ejecuta binarios de `bridge/config.json → processes.allow` (las
+instalaciones nuevas incluyen `php`/`python`/`composer`); `processes.bins` mapea un
+nombre a una ruta absoluta para ejecutables fuera del `PATH`. Corre sin shell y con
+`cwd` dentro del workspace.
 
 ## Decisiones
 
@@ -115,7 +122,8 @@ y los argumentos con una whitelist (`OC_ALLOWED`).
 - **Sin dependencias de framework**: HTTP nativo de Node; la unica dependencia
   es `web-push`. El QR se genera con codigo propio (`src/qr.js`).
 - **Cabeceras de seguridad**: CSP restrictiva; permite scripts/estilos inline
-  porque los templates los usan.
+  porque los templates los usan, y `frame-src` para embeber la vista previa
+  (dev server local/LAN o la URL del tunel).
 - **Cola de comandos del puente**: un solo canal (poll) para fs, procesos,
   tuneles y git, valido igual en local y remoto.
 - **Proveedores de tunel detras de una interfaz**: `startTunnel(port, provider)`

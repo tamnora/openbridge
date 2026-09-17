@@ -108,6 +108,11 @@ opencode en su barrido, asi que el historial se va poblando solo. No subas un
 
 ## Notas y problemas
 
+- **Panel y vista previa**: el frontend compartido ya trae el panel derecho
+  (escritorio) con estructura del proyecto y `iframe` del dev server; el CSP del
+  hub incluye `frame-src`. Para la deteccion de dev run (`proc_detect`) y
+  `processes.bins` cada PC necesita el **puente actualizado**
+  (`npm i -g @danieltmn/openbridge@latest` y reiniciar el puente).
 - **SSE/long-poll buffereados por el hosting**: el `.htaccess` excluye
   `text/event-stream` de gzip y el server manda `X-Accel-Buffering: no`. La app
   ademas cae a *polling* si no recibe `hello` en unos segundos.
