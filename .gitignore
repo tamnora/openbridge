@@ -19,6 +19,7 @@ logs/
 
 # Empaquetados
 *.tgz
+*.zip
 
 # Sistema
 .DS_Store
