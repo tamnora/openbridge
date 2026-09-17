@@ -69,7 +69,8 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
       y devuelve chips de comandos en **procs**. Recuerda el ultimo comando por carpeta.
 - [x] `processes.bins` en `bridge/config.json` (mapa nombre -> ruta, p. ej. `php` fuera
       del PATH) y `allow` con `php`/`python`/`composer` por defecto.
-- [ ] En instalaciones con `processes.allow` explicito, agregar `php` (y compania) a mano.
+- [x] `processes.allow` con el default viejo (`npm`/`node`/`npx`) se actualiza solo
+      al actualizar OpenBridge; los `allow` personalizados se respetan.
 - [ ] Llevar el panel al movil (hoy es solo escritorio; se usan las vistas full `archivos`/`preview`).
 
 

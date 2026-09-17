@@ -106,10 +106,11 @@ y los argumentos con una whitelist (`OC_ALLOWED`). `proc_detect` es read-only:
 inspecciona el proyecto (`package.json`, `composer.json`/`artisan`, entrypoints
 PHP) y devuelve los comandos sugeridos para correrlo en dev.
 
-`proc_start` solo ejecuta binarios de `bridge/config.json → processes.allow` (las
-instalaciones nuevas incluyen `php`/`python`/`composer`); `processes.bins` mapea un
-nombre a una ruta absoluta para ejecutables fuera del `PATH`. Corre sin shell y con
-`cwd` dentro del workspace.
+`proc_start` solo ejecuta binarios de `bridge/config.json → processes.allow` (ya
+incluye `php`/`python`/`composer`; una config con el default viejo `npm`/`node`/
+`npx` se actualiza sola al actualizar OpenBridge, y los allow personalizados se
+respetan); `processes.bins` mapea un nombre a una ruta absoluta para ejecutables
+fuera del `PATH`. Corre sin shell y con `cwd` dentro del workspace.
 
 ## Decisiones
 

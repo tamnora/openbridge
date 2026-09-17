@@ -184,10 +184,10 @@ El puente solo ejecuta binarios permitidos en `bridge/config.json`:
 }
 ```
 
-`allow` es la lista blanca (las instalaciones nuevas ya traen `php`/`python`/
-`composer`; si actualizás una vieja, agregalos a mano). `bins` mapea un nombre a
-una ruta absoluta cuando el ejecutable **no** está en el `PATH`. Los comandos
-corren **sin shell** y con `cwd` dentro del workspace.
+`allow` es la lista blanca (ya trae `php`/`python`/`composer`; una config con el
+default viejo `npm`/`node`/`npx` se actualiza sola al actualizar OpenBridge). `bins`
+mapea un nombre a una ruta absoluta cuando el ejecutable **no** está en el `PATH`.
+Los comandos corren **sin shell** y con `cwd` dentro del workspace.
 
 ## Hub en hosting PHP (URL fija, sin túnel)
 

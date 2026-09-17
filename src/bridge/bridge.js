@@ -1915,22 +1915,31 @@ const PROC_LOG_CHUNK = 32 * 1024; // máx. caracteres por respuesta de proc_log
 
 function procConfig() {
     const p = (config && config.processes) || {};
+    const norm = (a) => String(a).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, '');
+    const DEFAULT_ALLOW = ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'];
+    const LEGACY_ALLOW = ['npm', 'node', 'npx'];
+    let allow = Array.isArray(p.allow) ? p.allow.map(norm) : DEFAULT_ALLOW.slice();
+    // Las configs viejas traian el allow por defecto de antes. No debe bloquear
+    // los runtimes nuevos (php/python/composer) despues de `openbridge update`:
+    // solo se reemplaza cuando es EXACTAMENTE ese default viejo (los allow
+    // personalizados se respetan tal cual).
+    if (allow.length === LEGACY_ALLOW.length && LEGACY_ALLOW.every((x) => allow.indexOf(x) >= 0)) {
+        allow = DEFAULT_ALLOW.slice();
+    }
     // processes.bins: { php: "C:\\xampp\\php\\php.exe" } para runtimes que no
     // estan en el PATH (Windows). La clave es el nombre que se escribe en el
     // comando; el valor, la ruta al ejecutable.
     const bins = {};
     if (p.bins && typeof p.bins === 'object') {
         for (const k of Object.keys(p.bins)) {
-            const name = String(k).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, '');
+            const name = norm(k);
             const val = String(p.bins[k] || '').trim();
             if (name && val) bins[name] = val;
         }
     }
     return {
         enabled: p.enabled !== false,
-        allow: Array.isArray(p.allow)
-            ? p.allow.map((a) => String(a).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, ''))
-            : ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'],
+        allow,
         maxGlobal: Math.max(1, parseInt(p.maxGlobal, 10) || 3),
         bins,
     };

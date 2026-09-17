@@ -4,6 +4,14 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Corregido
+
+- `processes.allow` con el default viejo (`npm`/`node`/`npx`) se actualiza solo al
+  actualizar OpenBridge, asi `php`/`python`/`composer` quedan permitidos sin editar
+  la config a mano. Los `allow` personalizados se respetan.
+
 ## [0.7.0] - 2026-09-17
 
 

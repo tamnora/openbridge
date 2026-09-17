@@ -20,7 +20,11 @@ const DEFAULT_BRIDGE = {
     agents: ['build', 'plan'],
     bridgeId: '',
     bridgeName: '',
-    processes: { enabled: true, allow: ['npm', 'node', 'npx'], maxGlobal: 3 },
+    processes: {
+        enabled: true,
+        allow: ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'],
+        maxGlobal: 3,
+    },
 };
 
 const DEFAULT_APP = {
