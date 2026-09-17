@@ -740,15 +740,6 @@ function projectLabel(folderPath) {
     return baseName(folderPath) || folderPath;
 }
 
-// Color estable por proyecto (hash de la ruta) para distinguirlos de un vistazo.
-function projectColor(folderPath) {
-    var s = String(folderPath || '');
-    if (!s) return '';
-    var h = 0;
-    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-    return 'hsl(' + h + ', 68%, 70%)';
-}
-
 function loadOpenProjects() {
     if (state.openProjects) return state.openProjects;
     var stored = null;
@@ -965,7 +956,7 @@ function renderSidebar() {
             html += '<div class="prow' + active + '" data-folder="' + esc(pr.folder) + '">'
                 + '<button type="button" class="proj-head" data-folder="' + esc(pr.folder) + '" title="Ver chats de ' + esc(pr.label) + '">'
                 + '<span class="chev">▸</span>'
-                + '<span class="pname"' + (pr.folder ? ' style="color:' + projectColor(pr.folder) + '"' : '') + '>' + esc(pr.label) + '</span>'
+                + '<span class="pname">' + esc(pr.label) + '</span>'
                 + actHtml
                 + '<span class="pcount">' + pr.sessions.length + '</span>'
                 + '</button>'
@@ -1302,7 +1293,7 @@ function renderHome(sessions) {
             html += '<div class="projsec' + (open ? ' open' : '') + '" data-folder="' + esc(key) + '">'
                 + '<button type="button" class="pshead" data-folder="' + esc(key) + '" title="' + (open ? 'Contraer' : 'Expandir') + '">'
                 + '<span class="chev">' + (open ? '▾' : '▸') + '</span>'
-                + '<span class="psname"' + (key ? ' style="color:' + projectColor(key) + '"' : '') + '>' + esc(label) + '</span>'
+                + '<span class="psname">' + esc(label) + '</span>'
                 + actHtml
                 + '<span class="pscount">' + total + (total === 1 ? ' sesión' : ' sesiones') + '</span>'
                 + '</button>'
