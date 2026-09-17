@@ -1064,6 +1064,8 @@ $OC_ALLOWED = [
     'proc_stop' => ['arg'],
     'proc_list' => [],
     'proc_log' => ['arg', 'arg'],
+    // Detección de cómo correr el proyecto en dev (read-only)
+    'proc_detect' => ['path'],
     // Libera un puerto TCP (pid que escucha) cuando un dev server falla con EADDRINUSE
     'port_free' => ['arg'],
 ];

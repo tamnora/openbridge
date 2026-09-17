@@ -44,9 +44,10 @@ const MOCK_OC = [
 ].join('\n');
 
 function startMockApi(workspace) {
-    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, seen: [] };
+    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, proc: null, resolveProc: null, seen: [], workspace };
     const responded = new Promise((resolve) => { state.resolveRespond = resolve; });
     const commanded = new Promise((resolve) => { state.resolveCommand = resolve; });
+    const procced = new Promise((resolve) => { state.resolveProc = resolve; });
     const server = http.createServer((req, res) => {
         let raw = '';
         req.on('data', (c) => { raw += c; });
@@ -72,7 +73,10 @@ function startMockApi(workspace) {
                             text: 'hola mock',
                             session: { folder: workspace, model: 'mock/model', agent: 'build' },
                         }],
-                        commands: [{ id: 9, name: 'mcp_list', args: [] }],
+                        commands: [
+                            { id: 9, name: 'mcp_list', args: [] },
+                            { id: 10, name: 'proc_detect', args: [path.join(workspace, 'proj')] },
+                        ],
                     };
                 } else {
                     json = { ok: true, known_oc: [], messages: [], commands: [], folders: [] };
@@ -83,6 +87,9 @@ function startMockApi(workspace) {
             } else if (action === 'command_done') {
                 try { state.command = JSON.parse(raw || '{}'); } catch (e) { state.command = {}; }
                 if (state.resolveCommand) state.resolveCommand(state.command);
+            } else if (action === 'proc_result') {
+                try { state.proc = JSON.parse(raw || '{}'); } catch (e) { state.proc = {}; }
+                if (state.resolveProc) state.resolveProc(state.proc);
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(json));
@@ -94,6 +101,7 @@ function startMockApi(workspace) {
             state.server = server;
             state.responded = responded;
             state.commanded = commanded;
+            state.procced = procced;
             resolve(state);
         });
     });
@@ -117,6 +125,10 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     const ws = path.join(base, 'ws');
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(ws, { recursive: true });
+    const proj = path.join(ws, 'proj');
+    fs.mkdirSync(path.join(proj, 'public'), { recursive: true });
+    fs.writeFileSync(path.join(proj, 'package.json'), JSON.stringify({ name: 'demo', scripts: { dev: 'vite' } }, null, 2));
+    fs.writeFileSync(path.join(proj, 'public', 'index.php'), '<?php echo 1;');
 
     const mock = path.join(base, 'mock-opencode.js');
     fs.writeFileSync(mock, MOCK_OC);
@@ -184,4 +196,21 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     const out = JSON.parse(done.text);
     assert.match(out.output, /mariadb connected/);
     assert.match(out.output, /playwright connected/);
+
+    // proc_detect: el puente inspecciona el proyecto y sugiere cómo correrlo.
+    let procTimer = null;
+    const procTimeout = new Promise((_, reject) => {
+        procTimer = setTimeout(() => reject(new Error('timeout esperando "proc_result" (proc_detect)')), 15000);
+    });
+    let procDone;
+    try {
+        procDone = await Promise.race([api.procced, procTimeout]);
+    } finally {
+        clearTimeout(procTimer);
+    }
+    assert.equal(procDone.id, 10);
+    assert.equal(procDone.ok, true);
+    const det = JSON.parse(procDone.text);
+    assert.ok(det.suggestions.some((s) => s.cmd === 'npm run dev'), 'detecta npm run dev');
+    assert.ok(det.suggestions.some((s) => s.cmd.indexOf('php -S') === 0), 'detecta php -S');
 });

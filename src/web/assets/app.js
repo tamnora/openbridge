@@ -68,6 +68,16 @@ var els = {
     viewChanges: document.getElementById('viewChanges'),
     viewMcp: document.getElementById('viewMcp'),
     viewDevices: document.getElementById('viewDevices'),
+    btnPanel: document.getElementById('btnPanel'),
+    rpTreePane: document.getElementById('rpTreePane'),
+    rpPreviewPane: document.getElementById('rpPreviewPane'),
+    rpPvPort: document.getElementById('rpPvPort'),
+    rpPvGo: document.getElementById('rpPvGo'),
+    rpPvTun: document.getElementById('rpPvTun'),
+    rpPvUrl: document.getElementById('rpPvUrl'),
+    rpPvFrame: document.getElementById('rpPvFrame'),
+    btnRpHide: document.getElementById('btnRpHide'),
+    rpReveal: document.getElementById('rpReveal'),
     themeColor: document.getElementById('themeColor'),
     themeLink: document.getElementById('themeStylesheet'),
     statusbar: document.getElementById('statusbar'),
@@ -183,6 +193,16 @@ var state = {
     tunnels: null,
     previewPort: '',
     proc: null,   // estado del proceso de la sesión (procStart), ver procState
+    // Panel derecho (escritorio): estructura del proyecto + vista previa.
+    rpanelOpen: false,
+    rpanelTab: 'tree',
+    rpTreeOpen: {},    // rel path -> bool (carpetas expandidas)
+    rpTreeCache: {},   // rel path -> entries
+    rpTreeErr: {},     // rel path -> error
+    rpShownFolder: null,    // carpeta del proyecto actualmente mostrada
+    rpRenderedFolder: null, // carpeta ya renderizada (evita re-render innecesario)
+    rpPvPort: '',      // puerto de la vista previa
+    rpPvUrl: '',       // última URL embebida
 };
 
 // Puente activo y lista conocida se restauran antes de pintar (caché local).
@@ -204,6 +224,8 @@ var procState = {
     input: '',         // última línea de comando (se conserva al re-render)
     detectedPort: '',  // puerto detectado en la salida (para el túnel)
     portConflict: null, // puerto en uso detectado por EADDRINUSE en el log
+    suggestions: [],   // comandos sugeridos por proc_detect (por proyecto)
+    suggestFor: '',    // carpeta para la que se detectaron las sugerencias
 };
 
 function esc(t) {
@@ -474,6 +496,7 @@ function applyBootPayload(data) {
     lsSet('ob_sessions', sessions);
     renderHome(sessions);
     applyOnlineUI();
+    rpRefresh();
 }
 
 if (els.bridgeBar) {
@@ -1239,6 +1262,291 @@ if (window.innerWidth >= 1024) {
 }
 
 // ---------------------------------------------------------------------------
+// Panel derecho (escritorio): estructura del proyecto + vista previa.
+// En móvil el CSS lo oculta; acá solo se maneja el estado de escritorio.
+// ---------------------------------------------------------------------------
+function rpStoredOpen() {
+    try {
+        var v = localStorage.getItem('ob_rpOpen');
+        if (v === '1') return true;
+        if (v === '0') return false;
+    } catch (e) {}
+    return window.innerWidth >= 1400;   // por defecto abierto en pantallas anchas
+}
+function rpSetOpen(open) {
+    state.rpanelOpen = !!open;
+    try { localStorage.setItem('ob_rpOpen', open ? '1' : '0'); } catch (e) {}
+    document.body.classList.toggle('rp-hide', !open);
+    if (els.btnPanel) els.btnPanel.setAttribute('aria-pressed', open ? 'true' : 'false');
+    if (open) rpRefresh();
+}
+function rpWidth() {
+    try {
+        var w = parseInt(localStorage.getItem('ob_rpW'), 10);
+        if (w >= 260 && w <= 720) return w;
+    } catch (e) {}
+    return 380;
+}
+function rpSetWidth(w) {
+    try { localStorage.setItem('ob_rpW', String(w)); } catch (e) {}
+    document.documentElement.style.setProperty('--rp-w', w + 'px');
+}
+function rpTab(tab) {
+    state.rpanelTab = tab === 'preview' ? 'preview' : 'tree';
+    try { localStorage.setItem('ob_rpTab', state.rpanelTab); } catch (e) {}
+    var tabs = document.querySelectorAll('#rpanel .rp-tab');
+    for (var i = 0; i < tabs.length; i++) {
+        tabs[i].classList.toggle('active', tabs[i].getAttribute('data-rptab') === state.rpanelTab);
+    }
+    if (els.rpTreePane) els.rpTreePane.hidden = state.rpanelTab !== 'tree';
+    if (els.rpPreviewPane) els.rpPreviewPane.hidden = state.rpanelTab !== 'preview';
+    if (state.rpanelTab === 'preview') rpRenderPreview();
+}
+function rpProjectFolder() {
+    var s = state.currentSession;
+    if (s && s.folder) return s.folder;
+    return state.focusFolder || '';
+}
+// Si cambió el proyecto mostrado, descarta el árbol cacheado del anterior.
+function rpSyncFolder() {
+    var folder = rpProjectFolder();
+    if (folder === state.rpShownFolder) return false;
+    state.rpShownFolder = folder;
+    state.rpRenderedFolder = null;
+    state.rpTreeOpen = {};
+    state.rpTreeCache = {};
+    state.rpTreeErr = {};
+    return true;
+}
+function rpRefresh() {
+    if (!state.rpanelOpen) return;
+    rpSyncFolder();
+    if (state.rpRenderedFolder === state.rpShownFolder) {
+        if (state.rpanelTab === 'preview') rpRenderPreview();
+        return;
+    }
+    state.rpRenderedFolder = state.rpShownFolder;
+    rpRenderTree();
+    if (state.rpanelTab === 'preview') rpRenderPreview();
+}
+
+// Lista un directorio relativo al workspace (local directo, remoto por puente).
+async function rpListDir(rel) {
+    if (isLocalHost()) {
+        var url = 'api.php?action=browse';
+        if (rel) url += '&path=' + encodeURIComponent(rel);
+        var data = await api(url);
+        if (data.ok) return { ok: true, entries: data.entries || [] };
+    }
+    var res = await runFsCommand('fs_list', rel);
+    if (res.ok) return { ok: true, entries: (res.data && res.data.entries) || [] };
+    return { ok: false, error: res.error };
+}
+
+function rpNodeHtml(rel, depth) {
+    var entries = state.rpTreeCache[rel] || [];
+    var html = '';
+    var pad = 'padding-left:' + (6 + depth * 13) + 'px';
+    for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        var p = rel ? rel + '/' + e.name : e.name;
+        if (e.type === 'dir') {
+            var open = !!state.rpTreeOpen[p];
+            html += '<button type="button" class="rp-row dir" data-rpdir="' + esc(p) + '" style="' + pad + '">'
+                + '<span class="rp-chev">' + (open ? '▾' : '▸') + '</span>'
+                + '<span class="rp-ico">📁</span><span class="rp-name">' + esc(e.name) + '</span></button>';
+            if (open) {
+                if (state.rpTreeErr[p]) {
+                    html += '<div class="rp-empty" style="' + pad + '">' + esc(state.rpTreeErr[p]) + '</div>';
+                } else if (!state.rpTreeCache[p]) {
+                    html += '<div class="rp-empty" style="' + pad + '">cargando…</div>';
+                } else {
+                    html += rpNodeHtml(p, depth + 1);
+                }
+            }
+        } else {
+            html += '<button type="button" class="rp-row file" data-rpfile="' + esc(p) + '" style="' + pad + '">'
+                + '<span class="rp-chev"></span>'
+                + '<span class="rp-ico">📄</span><span class="rp-name">' + esc(e.name) + '</span></button>';
+        }
+    }
+    return html;
+}
+
+function rpRenderTree() {
+    var box = els.rpTreePane;
+    if (!box) return;
+    var folder = rpProjectFolder();
+    if (!folder) {
+        box.innerHTML = '<div class="rp-empty">Abrí un chat con carpeta de proyecto para ver su estructura.</div>';
+        return;
+    }
+    var root = folderToFilesPath(folder);
+    var head = '<div class="rp-root" title="' + esc(folder) + '">' + esc(projectLabel(folder) || folder) + '</div>';
+    if (state.rpTreeErr[root]) {
+        box.innerHTML = head + '<div class="rp-empty">' + esc(state.rpTreeErr[root]) + '</div>';
+        return;
+    }
+    if (!state.rpTreeCache[root]) {
+        box.innerHTML = head + '<div class="rp-empty">cargando…</div>';
+        rpLoadDir(root);
+        return;
+    }
+    if (!state.rpTreeCache[root].length) {
+        box.innerHTML = head + '<div class="rp-empty">carpeta vacía (o solo con carpetas ignoradas).</div>';
+        return;
+    }
+    box.innerHTML = head + rpNodeHtml(root, 0);
+}
+
+async function rpLoadDir(rel) {
+    var r = await rpListDir(rel);
+    if (r.ok) { state.rpTreeCache[rel] = r.entries; state.rpTreeErr[rel] = ''; }
+    else { state.rpTreeErr[rel] = r.error || 'no se pudo listar'; }
+    if (state.rpanelOpen && state.rpanelTab === 'tree') rpRenderTree();
+}
+
+async function rpToggleDir(rel) {
+    if (state.rpTreeOpen[rel]) { state.rpTreeOpen[rel] = false; rpRenderTree(); return; }
+    state.rpTreeOpen[rel] = true;
+    rpRenderTree();
+    if (!state.rpTreeCache[rel]) await rpLoadDir(rel);
+}
+
+async function rpOpenFile(rel) {
+    var dir = rel.indexOf('/') >= 0 ? rel.slice(0, rel.lastIndexOf('/')) : '';
+    if (!state.filesCache[dir]) {
+        var r = await rpListDir(dir);
+        if (r.ok) { state.filesCache[dir] = r.entries; state.rpTreeCache[dir] = r.entries; }
+    }
+    state.filesPath = dir;
+    showView('files');
+    openFileView(rel);
+}
+
+// URL de la vista previa: túnel si existe, si no localhost/LAN (misma red).
+function rpPreviewUrl() {
+    var port = String(state.rpPvPort || '').trim();
+    if (!validPort(port)) return '';
+    var list = state.tunnels || [];
+    for (var i = 0; i < list.length; i++) {
+        if (String(list[i].port) === String(port) && (list[i].https || list[i].http)) {
+            return list[i].https || list[i].http;
+        }
+    }
+    if (isLocalHost()) return location.protocol + '//' + location.hostname + ':' + port;
+    return '';
+}
+
+function rpRenderPreview() {
+    if (!els.rpPreviewPane) return;
+    var port = state.rpPvPort || procState.detectedPort || '';
+    state.rpPvPort = port;
+    if (els.rpPvPort && els.rpPvPort.value !== port) els.rpPvPort.value = port;
+    var url = rpPreviewUrl();
+    if (els.rpPvUrl) {
+        if (url) {
+            els.rpPvUrl.innerHTML = '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>';
+        } else if (!port) {
+            els.rpPvUrl.textContent = 'indicá el puerto del dev server (arrancalo en “procs”).';
+        } else if (!isLocalHost()) {
+            els.rpPvUrl.textContent = 'remoto: abrí un túnel para ver el puerto ' + port + '.';
+        } else {
+            els.rpPvUrl.textContent = 'puerto inválido.';
+        }
+    }
+    if (els.rpPvFrame) {
+        if (url) {
+            if (els.rpPvFrame.getAttribute('data-url') !== url) {
+                els.rpPvFrame.setAttribute('data-url', url);
+                els.rpPvFrame.setAttribute('src', url);
+            }
+        } else {
+            els.rpPvFrame.removeAttribute('data-url');
+            els.rpPvFrame.removeAttribute('src');
+        }
+    }
+}
+
+async function rpStartTunnel() {
+    var port = validPort(els.rpPvPort ? els.rpPvPort.value : state.rpPvPort);
+    if (!port) { toast('escribí un puerto válido (1–65535)', 'error'); return; }
+    state.rpPvPort = String(port);
+    try { localStorage.setItem('ob_lastPort', String(port)); } catch (e) {}
+    var already = (state.tunnels || []).some(function (t) { return parseInt(t.port, 10) === port; });
+    if (!already) {
+        if (els.rpPvUrl) els.rpPvUrl.textContent = 'levantando túnel para el puerto ' + port + '…';
+        var res = await ocCommand('tunnel_start', [String(port)], 90, 800);
+        if (!res.ok) { toast(res.error || 'no se pudo abrir el túnel', 'error'); }
+    }
+    await refreshTunnels(true);
+    rpRenderPreview();
+}
+
+if (els.btnPanel) els.btnPanel.addEventListener('click', function () { rpSetOpen(!state.rpanelOpen); });
+if (els.btnRpHide) els.btnRpHide.addEventListener('click', function () { rpSetOpen(false); });
+if (els.rpReveal) els.rpReveal.addEventListener('click', function () { rpSetOpen(true); });
+(function () {
+    var tabs = document.querySelectorAll('#rpanel .rp-tab');
+    for (var i = 0; i < tabs.length; i++) {
+        (function (btn) {
+            btn.addEventListener('click', function () { rpTab(btn.getAttribute('data-rptab')); });
+        })(tabs[i]);
+    }
+})();
+if (els.rpTreePane) {
+    els.rpTreePane.addEventListener('click', function (e) {
+        var dir = e.target.closest('[data-rpdir]');
+        if (dir) { rpToggleDir(dir.getAttribute('data-rpdir')); return; }
+        var file = e.target.closest('[data-rpfile]');
+        if (file) rpOpenFile(file.getAttribute('data-rpfile'));
+    });
+}
+if (els.rpPvGo) {
+    els.rpPvGo.addEventListener('click', function () {
+        state.rpPvPort = String(els.rpPvPort.value || '').replace(/[^0-9]/g, '');
+        rpRenderPreview();
+    });
+}
+if (els.rpPvPort) {
+    els.rpPvPort.addEventListener('input', function () {
+        els.rpPvPort.value = els.rpPvPort.value.replace(/[^0-9]/g, '');
+    });
+    els.rpPvPort.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); state.rpPvPort = els.rpPvPort.value; rpRenderPreview(); }
+    });
+}
+if (els.rpPvTun) els.rpPvTun.addEventListener('click', rpStartTunnel);
+var rpResizer = document.getElementById('rpResizer');
+if (rpResizer) {
+    rpResizer.addEventListener('pointerdown', function (e) {
+        if (window.innerWidth < 1024) return;
+        e.preventDefault();
+        rpResizer.setPointerCapture(e.pointerId);
+        rpResizer.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        var move = function (ev) {
+            rpSetWidth(Math.max(260, Math.min(720, window.innerWidth - ev.clientX)));
+        };
+        var up = function () {
+            rpResizer.classList.remove('dragging');
+            document.body.style.userSelect = '';
+            rpResizer.removeEventListener('pointermove', move);
+            rpResizer.removeEventListener('pointerup', up);
+        };
+        rpResizer.addEventListener('pointermove', move);
+        rpResizer.addEventListener('pointerup', up);
+    });
+    rpResizer.addEventListener('dblclick', function () { rpSetWidth(380); });
+}
+if (window.innerWidth >= 1024) {
+    try { state.rpanelTab = localStorage.getItem('ob_rpTab') === 'preview' ? 'preview' : 'tree'; } catch (e) {}
+    document.documentElement.style.setProperty('--rp-w', rpWidth() + 'px');
+    rpTab(state.rpanelTab);
+    rpSetOpen(rpStoredOpen());
+}
+
+// ---------------------------------------------------------------------------
 // Home: sesiones agrupadas por proyecto
 // ---------------------------------------------------------------------------
 function renderHome(sessions) {
@@ -1858,6 +2166,7 @@ function renderChat(session, messages) {
     }
     renderSidebar();
     updateStatusbar();
+    rpRefresh();
 }
 
 // Copiar mensajes y bloques de código (delegado, sobrevive a los re-renders).
@@ -1942,6 +2251,7 @@ function goHome() {
     state.chatSearch = null;
     showView('home');
     loadSessions();
+    rpRefresh();
 }
 
 // Sidebar: tocá un proyecto → lo expande y resalta en la vista de chats.
@@ -3700,6 +4010,36 @@ var PROC_POLL_MS = 2200;
 var PROC_POLL_OFFLINE_MS = 5000;
 var PROC_SUGGESTIONS = ['npm run dev', 'node server.js', 'npm start', 'npm run build'];
 
+// Último comando dev usado por carpeta (se recuerda en el navegador).
+function procCmdStore() {
+    try { return JSON.parse(localStorage.getItem('ob_procCmds') || '{}') || {}; } catch (e) { return {}; }
+}
+function procCmdGet(folder) {
+    var m = procCmdStore();
+    return (folder && m[folder]) ? String(m[folder]) : '';
+}
+function procCmdSet(folder, cmd) {
+    if (!folder || !cmd) return;
+    var m = procCmdStore();
+    m[folder] = cmd;
+    try { localStorage.setItem('ob_procCmds', JSON.stringify(m)); } catch (e) {}
+}
+
+// Pide al puente cómo correr el proyecto en dev (package.json/composer/php).
+async function loadProcSuggestions(folder) {
+    if (!folder || procState.suggestFor === folder) return;
+    procState.suggestFor = folder;
+    procState.suggestions = [];
+    buildProcChips();
+    var res = await ocCommand('proc_detect', [folder], 20, 700);
+    if (procState.suggestFor !== folder) return;
+    if (res.ok && res.data && Array.isArray(res.data.suggestions)) {
+        procState.suggestions = res.data.suggestions;
+        if (res.data.port && !procState.detectedPort) procState.detectedPort = String(res.data.port);
+    }
+    buildProcChips();
+}
+
 function procReset() {
     procGen++;
     procState.id = null;
@@ -3740,7 +4080,9 @@ function enterProcsView() {
         procReset();
     }
     procState.open = true;
+    if (!procState.input) procState.input = procCmdGet(folder);
     renderProcView(folder);
+    loadProcSuggestions(folder);
     procPollTick();
 }
 
@@ -3832,9 +4174,13 @@ async function freePortConflict() {
 function buildProcChips() {
     var box = document.getElementById('procChips');
     if (!box) return;
+    var list = (procState.suggestions && procState.suggestions.length)
+        ? procState.suggestions
+        : PROC_SUGGESTIONS.map(function (c) { return { label: c, cmd: c }; });
     var html = '';
-    for (var i = 0; i < PROC_SUGGESTIONS.length; i++) {
-        html += '<button type="button" class="chip" data-cmd="' + esc(PROC_SUGGESTIONS[i]) + '">' + esc(PROC_SUGGESTIONS[i]) + '</button>';
+    for (var i = 0; i < list.length; i++) {
+        var s = list[i];
+        html += '<button type="button" class="chip" data-cmd="' + esc(s.cmd) + '" title="' + esc(s.label || s.cmd) + '">' + esc(s.label || s.cmd) + '</button>';
     }
     box.innerHTML = html;
     var chips = box.querySelectorAll('.chip');
@@ -3997,6 +4343,7 @@ async function procPollTick() {
                     procState.detectedPort = pm[1];
                     var tp = document.getElementById('ppTunPort');
                     if (tp && !tp.value) tp.value = pm[1];
+                    if (state.rpanelOpen && state.rpanelTab === 'preview') rpRenderPreview();
                 }
                 // Puerto en uso (dev server viejo): ofrecer liberarlo.
                 if (!procState.portConflict) {
@@ -4050,6 +4397,7 @@ async function startSessionProc() {
     procState.running = true;
     procState.cmd = cmd;
     procState.input = cmd;
+    procCmdSet(folder, cmd);
     if (!procState.id) { toast('no se recibió el id del proceso', 'error'); }
     await procPollTick();
 }

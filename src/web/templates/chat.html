@@ -1147,6 +1147,72 @@
         .tunnel .tnote-sec { font-size: 11px; color: var(--muted); margin-top: 4px; }
         mark { background: var(--accent); color: var(--bg); padding: 0 2px; border-radius: 3px; }
 
+        /* ----- Panel derecho: estructura del proyecto + vista previa (escritorio) ----- */
+        #rpanel {
+            width: var(--rp-w, 380px);
+            position: relative;
+            background: var(--rail, var(--panel));
+            border-left: 1px solid var(--border);
+            display: flex; flex-direction: column;
+            flex-shrink: 0; z-index: 30; min-width: 0;
+        }
+        #rpanel .rp-tabs {
+            display: flex; align-items: center; gap: 6px;
+            padding: 8px 10px; border-bottom: 1px solid var(--border); min-height: 54px;
+        }
+        #rpanel .rp-tab {
+            background: transparent; border: 1px solid transparent; color: var(--muted);
+            border-radius: 8px; padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer;
+        }
+        #rpanel .rp-tab:hover { color: var(--text); }
+        #rpanel .rp-tab.active { color: var(--text); border-color: var(--border); background: var(--accent-soft); }
+        #rpanel .rp-hide {
+            margin-left: auto; background: transparent; border: 0; color: var(--muted);
+            cursor: pointer; font: inherit; font-size: 13px; line-height: 1; padding: 5px 7px; border-radius: 6px;
+        }
+        #rpanel .rp-hide:hover { color: var(--text); background: var(--accent-soft); }
+        #rpanel .rp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+        #rpanel .rp-pane { flex: 1; min-height: 0; overflow: auto; padding: 4px 4px 12px; }
+        #rpanel .rp-pane[hidden] { display: none; }
+        #rpanel .rp-root { padding: 6px 9px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+        #rpanel .rp-empty { padding: 14px 12px; color: var(--muted); font-size: 12.5px; }
+        .rp-row {
+            display: flex; align-items: center; gap: 5px; width: 100%;
+            background: transparent; border: 0; color: var(--text);
+            font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+            padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+        }
+        .rp-row:hover { background: var(--accent-soft); }
+        .rp-row .rp-chev { width: 11px; flex-shrink: 0; color: var(--muted); font-size: 9px; }
+        .rp-row .rp-ico { flex-shrink: 0; font-size: 11px; opacity: .85; }
+        .rp-row .rp-name { overflow: hidden; text-overflow: ellipsis; }
+        .rp-row.file .rp-name { color: var(--muted); }
+        .rp-row.file:hover .rp-name { color: var(--text); }
+        #rpanel .rp-pane.pv { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+        #rpanel .rp-pane.pv[hidden] { display: none; }
+        #rpanel .rp-pv-bar { display: flex; gap: 6px; padding: 8px 10px; align-items: center; }
+        #rpanel .rp-pv-bar input {
+            flex: 1; min-width: 0; padding: 6px 9px; background: var(--bg);
+            border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+            font: inherit; font-size: 12.5px; outline: none;
+        }
+        #rpanel .rp-pv-bar input:focus { border-color: var(--accent); }
+        #rpanel .rp-pv-url { padding: 0 10px 8px; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #rpanel .rp-pv-url a { color: var(--accent); }
+        #rpanel .rp-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+        #rpanel .rp-resizer {
+            position: absolute; top: 0; bottom: 0; left: -3px; width: 6px;
+            cursor: col-resize; z-index: 31; touch-action: none;
+        }
+        #rpanel .rp-resizer:hover, #rpanel .rp-resizer.dragging { background: var(--accent-soft); }
+        .rp-reveal {
+            display: none; position: fixed; top: 50%; right: 0; transform: translateY(-50%);
+            background: var(--panel); border: 1px solid var(--border); border-right: 0;
+            color: var(--muted); border-radius: 8px 0 0 8px;
+            padding: 16px 5px; font: inherit; font-size: 12px; line-height: 1; cursor: pointer; z-index: 31;
+        }
+        .rp-reveal:hover { color: var(--accent); background: var(--accent-soft); }
+
         /* ----- Responsive ----- */
         @media (max-width: 1023px) {
             #sidebar {
@@ -1160,6 +1226,9 @@
             header .burger { display: inline-flex; }
             .fab.show { display: block; }
             .sb-reveal { display: none !important; }
+            #rpanel { display: none !important; }
+            .rp-reveal { display: none !important; }
+            header #btnPanel { display: none; }
         }
         @media (min-width: 1024px) {
             header .burger { display: none; }
@@ -1168,6 +1237,8 @@
             #sidebar .resizer { display: block; }
             body.sb-hide #sidebar { display: none; }
             body.sb-hide .sb-reveal { display: block; }
+            body.rp-hide #rpanel { display: none; }
+            body.rp-hide .rp-reveal { display: block; }
         }
         @media (min-width: 720px) {
             header a.logout { display: inline-flex; }
@@ -1238,6 +1309,7 @@
                 </div>
             </div>
             <div class="actions">
+                <button class="icbtn" id="btnPanel" type="button" title="Panel del proyecto (estructura / vista previa)" aria-label="Panel del proyecto" aria-pressed="false">▥</button>
                 <button class="icbtn" id="btnPush" type="button" title="Activar avisos en este dispositivo" aria-label="Activar avisos" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></svg></button>
                 <button class="icbtn" id="btnSkin" title="Cambiar tema" aria-label="Cambiar tema">◍</button>
                 <button class="icbtn" id="btnCmds" title="Comandos" aria-label="Comandos disponibles">/</button>
@@ -1307,6 +1379,28 @@
             <span class="seg" id="sbExtra"></span>
         </footer>
     </main>
+
+    <aside id="rpanel" aria-label="Panel del proyecto">
+        <div class="rp-tabs">
+            <button type="button" class="rp-tab active" data-rptab="tree">estructura</button>
+            <button type="button" class="rp-tab" data-rptab="preview">preview</button>
+            <button type="button" class="rp-hide" id="btnRpHide" title="Ocultar panel" aria-label="Ocultar panel">✕</button>
+        </div>
+        <div class="rp-body">
+            <div class="rp-pane" id="rpTreePane"></div>
+            <div class="rp-pane pv" id="rpPreviewPane" hidden>
+                <div class="rp-pv-bar">
+                    <input type="text" id="rpPvPort" inputmode="numeric" placeholder="puerto (ej: 3001)" autocomplete="off">
+                    <button type="button" class="linkbtn" id="rpPvGo">ver</button>
+                    <button type="button" class="linkbtn" id="rpPvTun">túnel</button>
+                </div>
+                <div class="rp-pv-url" id="rpPvUrl"></div>
+                <iframe id="rpPvFrame" class="rp-frame" title="vista previa" referrerpolicy="no-referrer"></iframe>
+            </div>
+        </div>
+        <div class="rp-resizer" id="rpResizer" title="Arrastrá para ajustar · doble clic para restablecer"></div>
+    </aside>
+    <button type="button" class="rp-reveal" id="rpReveal" title="Mostrar panel" aria-label="Mostrar panel">«</button>
 
     <button class="fab" id="fabNew" title="Nueva sesión" aria-label="Nueva sesión">＋</button>
 

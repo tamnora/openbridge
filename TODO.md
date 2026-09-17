@@ -58,6 +58,21 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] **Plantillas de prompts** guardadas en el navegador (insertar/borrar/guardar lo escrito).
 - [x] **Multiusuario** con roles `admin`/`user`: login usuario+contrasena, CLI `users`, gate server-side y **autor** en cada mensaje.
 
+## 1b. Panel del proyecto y dev run (escritorio)
+
+- [x] **Panel derecho** en escritorio (colapsable, con resizer): pestaña **estructura**
+      (arbol de carpetas/archivos del proyecto de la sesion) y **preview** (iframe del
+      dev server: `localhost`/LAN o la URL del tunel). Oculto en movil.
+- [x] **Deteccion de dev run** por proyecto (`proc_detect` en el puente): mira
+      `package.json` (scripts dev/start/serve/preview), `composer.json`/`artisan` y
+      entrypoints PHP (`public/index.php`, `backend/public/index.php`, `index.php`),
+      y devuelve chips de comandos en **procs**. Recuerda el ultimo comando por carpeta.
+- [x] `processes.bins` en `bridge/config.json` (mapa nombre -> ruta, p. ej. `php` fuera
+      del PATH) y `allow` con `php`/`python`/`composer` por defecto.
+- [ ] En instalaciones con `processes.allow` explicito, agregar `php` (y compania) a mano.
+- [ ] Llevar el panel al movil (hoy es solo escritorio; se usan las vistas full `archivos`/`preview`).
+
+
 ## 2. Túnel y URL estable (PWA / Web Push)
 
 - [ ] **URL fija**: TunnelMole da URL aleatoria por arranque → se rompe la PWA y las

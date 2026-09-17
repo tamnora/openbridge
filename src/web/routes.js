@@ -209,6 +209,7 @@ const OC_ALLOWED = {
     proc_stop: ['arg'],
     proc_list: [],
     proc_log: ['arg', 'arg'],
+    proc_detect: ['path'],
     port_free: ['arg'],
 };
 

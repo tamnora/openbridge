@@ -71,11 +71,13 @@ function securityHeaders(res) {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
     // La app usa scripts/estilos inline (templates) y data: para imagenes
-    // adjuntas. Igual bloquea origenes externos, frames y objetos.
+    // adjuntas. frame-src permite embeber la vista previa del dev server
+    // (localhost/LAN o la URL del tunel publico). El resto bloquea externos.
     res.setHeader('Content-Security-Policy',
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         + "script-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self'; "
         + "manifest-src 'self'; object-src 'none'; base-uri 'none'; "
+        + "frame-src 'self' http: https:; "
         + "frame-ancestors 'none'; form-action 'self'");
 }
 

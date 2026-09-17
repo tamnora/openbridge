@@ -555,6 +555,7 @@ function ob_security_headers() {
     header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; "
         . "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
         . "connect-src 'self'; worker-src 'self'; manifest-src 'self'; "
+        . "frame-src 'self' http: https:; "
         . "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 }
 

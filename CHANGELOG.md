@@ -4,6 +4,22 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- **Panel del proyecto (escritorio)**: panel derecho colapsable con pestañas
+  **estructura** (arbol de carpetas/archivos del proyecto de la sesion) y **preview**
+  (iframe del dev server: `localhost`/LAN o la URL del tunel). Oculto en movil.
+- **Dev run por proyecto**: el puente detecta como correrlo (`proc_detect`: scripts de
+  `package.json`, `composer.json`/`artisan` y entrypoints PHP) y los muestra como chips
+  en **procs**; recuerda el ultimo comando por carpeta. `processes.bins` permite mapear
+  binarios fuera del PATH (p. ej. `php`) y `allow` suma `php`/`python`/`composer`.
+
+### Cambiado
+
+- CSP: se agrega `frame-src 'self' http: https:` para embeber la vista previa.
+
 ## [0.6.4] - 2026-09-16
 
 ### Cambiado

@@ -228,7 +228,13 @@ function loadConfig() {
                 bridgeId: '',
                 bridgeName: '',
                 // Procesos de desarrollo lanzados desde la web (proc_start...).
-                processes: { enabled: true, allow: ['npm', 'node', 'npx'], maxGlobal: 3 },
+                // bins mapea un nombre a una ruta (p. ej. php fuera del PATH).
+                processes: {
+                    enabled: true,
+                    allow: ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'],
+                    maxGlobal: 3,
+                    bins: {},
+                },
             },
             cfg
         );
@@ -1909,12 +1915,24 @@ const PROC_LOG_CHUNK = 32 * 1024; // máx. caracteres por respuesta de proc_log
 
 function procConfig() {
     const p = (config && config.processes) || {};
+    // processes.bins: { php: "C:\\xampp\\php\\php.exe" } para runtimes que no
+    // estan en el PATH (Windows). La clave es el nombre que se escribe en el
+    // comando; el valor, la ruta al ejecutable.
+    const bins = {};
+    if (p.bins && typeof p.bins === 'object') {
+        for (const k of Object.keys(p.bins)) {
+            const name = String(k).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, '');
+            const val = String(p.bins[k] || '').trim();
+            if (name && val) bins[name] = val;
+        }
+    }
     return {
         enabled: p.enabled !== false,
         allow: Array.isArray(p.allow)
             ? p.allow.map((a) => String(a).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, ''))
-            : ['npm', 'node', 'npx'],
+            : ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'],
         maxGlobal: Math.max(1, parseInt(p.maxGlobal, 10) || 3),
+        bins,
     };
 }
 
@@ -1980,9 +1998,20 @@ function procFindOnPath(name) {
 //  - npm/npx → node.exe + su cli (node_modules/npm/bin/*-cli.js), probado.
 //  - otro permitido → .exe directo, o shim .cmd/.bat vía cmd.exe /c (spawn
 //    directo de .cmd da EINVAL en Node/Windows).
-function procResolveBin(token, allowSet) {
+function procResolveBin(token, allowSet, bins) {
     const bare = String(token).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, '');
     if (bare.includes('/') || bare.includes('\\')) throw new Error('el programa debe ser un nombre en el PATH');
+    // Mapa explícito (config.json → processes.bins): opt-in del dueño; tiene
+    // prioridad sobre el PATH y no exige que el nombre esté en `allow`.
+    if (bins && bins[bare]) {
+        const p = String(bins[bare]);
+        if (!fs.existsSync(p)) throw new Error('no existe el binario de "' + bare + '": ' + p);
+        const ext = path.extname(p).toLowerCase();
+        if (ext === '.cmd' || ext === '.bat') {
+            return { bin: 'cmd.exe', pre: ['/d', '/s', '/c', '"' + p + '"'], verbatim: true };
+        }
+        return { bin: p, pre: [] };
+    }
     // allowSet null = uso interno del puente (túneles); con lista, se exige.
     if (allowSet && !allowSet.has(bare)) throw new Error('programa no permitido (config.json → processes.allow)');
     if (process.platform !== 'win32') return { bin: token, pre: [] };
@@ -2079,7 +2108,7 @@ async function procStart(cmd) {
         return;
     }
     let spec;
-    try { spec = procResolveBin(tokens[0], new Set(pc.allow)); }
+    try { spec = procResolveBin(tokens[0], new Set(pc.allow), pc.bins); }
     catch (e) { await procDone(cmd, false, null, e.message); return; }
     const procArgs = (spec.pre || []).concat(tokens.slice(1));
     let child;
@@ -2225,6 +2254,68 @@ async function procLog(cmd) {
     });
 }
 
+// Inspecciona la raíz de un proyecto (read-only) y sugiere cómo correrlo en dev:
+// package.json (scripts), composer.json/artisan y entrypoints PHP. Devuelve
+// { folder, kind, port, suggestions: [{ label, cmd }] }.
+async function procDetect(cmd) {
+    let folder;
+    try { folder = procResolveFolder(cmd.args && cmd.args[0]); }
+    catch (e) { await procDone(cmd, false, null, e.message); return; }
+    const out = { folder, kind: '', port: '', suggestions: [] };
+    const add = (label, c) => {
+        if (c && !out.suggestions.some((s) => s.cmd === c)) out.suggestions.push({ label, cmd: c });
+    };
+    const readJson = (name) => {
+        try { return JSON.parse(fs.readFileSync(path.join(folder, name), 'utf8')); }
+        catch (e) { return null; }
+    };
+    const has = (rel) => { try { return fs.existsSync(path.join(folder, rel)); } catch (e) { return false; } };
+
+    // Node: scripts de package.json (dev/start/serve/preview).
+    const pkg = readJson('package.json');
+    if (pkg) {
+        out.kind = 'node';
+        const scripts = (pkg && pkg.scripts) || {};
+        for (const key of ['dev', 'start', 'serve', 'preview']) {
+            if (scripts[key]) add((key === 'start' ? 'npm start' : 'npm run ' + key) + '  (package.json)',
+                key === 'start' ? 'npm start' : 'npm run ' + key);
+        }
+        if (!out.suggestions.length) {
+            const entry = pkg.main || (has('server.js') ? 'server.js' : (has('index.js') ? 'index.js' : ''));
+            if (entry) add('node ' + entry, 'node ' + entry);
+        }
+    }
+
+    // PHP: artisan (Laravel), scripts de composer y front controllers.
+    const composer = readJson('composer.json');
+    if (has('artisan')) {
+        out.kind = out.kind || 'php';
+        add('php artisan serve', 'php artisan serve');
+    }
+    if (composer && composer.scripts && typeof composer.scripts === 'object') {
+        for (const key of Object.keys(composer.scripts)) {
+            if (key === 'serve' || key === 'dev' || key === 'start') {
+                out.kind = out.kind || 'php';
+                add('composer run ' + key, 'composer run ' + key);
+            }
+        }
+    }
+    if (!has('artisan')) {
+        const entries = ['public/index.php', 'backend/public/index.php', 'web/index.php', 'index.php'];
+        const entry = entries.find(has);
+        if (entry) {
+            out.kind = out.kind || 'php';
+            out.port = out.port || '3001';
+            add('php -S 127.0.0.1:3001 ' + entry, 'php -S 127.0.0.1:3001 ' + entry);
+            const dir = path.posix.dirname(entry);
+            if (dir && dir !== '.') {
+                add('php -S 127.0.0.1:3001 -t ' + dir, 'php -S 127.0.0.1:3001 -t ' + dir);
+            }
+        }
+    }
+    await procDone(cmd, true, out);
+}
+
 async function handleCommand(cmd) {
     // Comandos fs_* los resuelve el puente directamente (sin opencode CLI).
     if (cmd.name === 'fs_list' || cmd.name === 'fs_read') {
@@ -2258,6 +2349,7 @@ async function handleCommand(cmd) {
     if (cmd.name === 'proc_stop') { await procStop(cmd); return; }
     if (cmd.name === 'proc_list') { await procList(cmd); return; }
     if (cmd.name === 'proc_log') { await procLog(cmd); return; }
+    if (cmd.name === 'proc_detect') { await procDetect(cmd); return; }
     if (cmd.name === 'port_free') { await portFree(cmd); return; }
     // Mapea el nombre "interno" al subcomando real de opencode.
     // Whitelist cerrada; cualquier nombre fuera de acá se rechaza.
