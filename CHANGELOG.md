@@ -4,6 +4,25 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- `scripts/deploy-php-hub.mjs`: deploy del hub PHP al hosting por FTPS con
+  subida incremental (manifiesto con hash), `push <archivos>` para subir solo
+  archivos puntuales, y comandos `status`, `backup`, `restore`, `reset`, `prune`,
+  `chmod` e `init`. Credenciales en `.deploy.env` (gitignored).
+- Subida blindada: cada archivo va por trozos a un nombre temporal, se verifica
+  el tamano y recien se renombra al destino; un fallo del hosting (`451`) ya no
+  deja el archivo en 0 bytes.
+- Sidebar: la version que se muestra (antes `v3` fija) ahora sale de
+  `package.json` (hub Node y hub PHP via `version.txt`).
+
+### Corregido
+
+- El `451` del hosting al subir por FTPS truncaba archivos grandes; la subida por
+  trozos con verificacion y rename evita romper el sitio.
+
 ## [0.7.2] - 2026-09-18
 
 

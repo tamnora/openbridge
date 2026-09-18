@@ -17,6 +17,7 @@ const push = require('../push');
 const jsonfile = require('../store/jsonfile');
 
 const TEMPLATES = path.join(__dirname, 'templates');
+const APP_VERSION = require('../../package.json').version;
 
 // Hash dummy para igualar el costo de scrypt cuando el usuario no existe (evita
 // filtrar si un nombre esta registrado por diferencias de tiempo).
@@ -155,6 +156,7 @@ async function handleChat({ app, req, res, query }) {
         PUSH_ENABLED: push.pushEnabled(app) ? 'true' : 'false',
         PUSH_KEY: push.publicKeyBase64url(app),
         APPJS_VER: encodeURIComponent(ver),
+        APP_VERSION,
     });
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
     res.end(html);

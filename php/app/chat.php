@@ -25,6 +25,12 @@ if (file_exists($appjs)) {
     $ver = (int)filemtime($appjs);
 }
 
+// Version del hub (la escribe scripts/build-php-hub.mjs desde package.json).
+$obver = trim((string)@file_get_contents(__DIR__ . '/version.txt'));
+if ($obver === '') {
+    $obver = 'dev';
+}
+
 $html = ob_render('chat.html', [
     'THEME' => ob_pick_theme($known),
     'CSRF' => $u['csrf'],
@@ -36,6 +42,7 @@ $html = ob_render('chat.html', [
     'PUSH_ENABLED' => push_enabled() ? 'true' : 'false',
     'PUSH_KEY' => push_public_key_base64url(),
     'APPJS_VER' => rawurlencode((string)$ver),
+    'APP_VERSION' => ob_esc($obver),
 ]);
 header('Content-Type: text/html; charset=utf-8');
 header('Cache-Control: no-cache');

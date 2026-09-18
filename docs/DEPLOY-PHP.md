@@ -48,6 +48,42 @@ app.js  sw.js  manifest.webmanifest  themes/  icons/  templates/
 
 `data/` (dentro de `.openbridge/`) debe ser **escribible** (0755/0775).
 
+### 1b. Deploy automatizado por FTPS (recomendado)
+
+`scripts/deploy-php-hub.mjs` arma `php/dist` y lo sube por FTPS con `curl`
+(sin dependencias). Credenciales en `.deploy.env` (gitignored; ver
+`.deploy.env.example`): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PASS`,
+`DEPLOY_PROTOCOL=ftps`, `DEPLOY_PORT=21`, `DEPLOY_REMOTE=/`,
+`DEPLOY_LOCAL=php/dist`, `DEPLOY_INSECURE=1`.
+
+```bash
+node scripts/deploy-php-hub.mjs status                 # que cambiaria (no toca nada)
+node scripts/deploy-php-hub.mjs sync                   # sube nuevos, actualiza y borra obsoletos
+node scripts/deploy-php-hub.mjs push templates/chat.html   # sube SOLO ese archivo
+node scripts/deploy-php-hub.mjs backup                 # app.json + data/** a backups/<host>/<fecha>/
+node scripts/deploy-php-hub.mjs reset --keep-data      # wipe + re-sube, conservando datos (pide --yes)
+```
+
+| Comando | Que hace |
+| --- | --- |
+| `status` | Diferencias local vs server + datos. No toca nada. |
+| `sync` | Sube nuevos, actualiza cambiados y borra obsoletos gestionados. |
+| `push <archivo...>` | Sube **solo** los archivos indicados (relativos a `php/dist`). |
+| `backup` | Baja `app.json` + `data/**` (`--all` = docroot completo). |
+| `restore <carpeta>` | Sube un backup local al server. |
+| `reset` | Backup, wipe total y re-sube `php/dist` (`--keep-data` default, `--wipe-data`). |
+| `prune` | Borra archivos remotos ajenos al deploy. |
+| `chmod` | Fija 0755 en `.openbridge` y `.openbridge/data`. |
+| `init` | Primer deploy en un server vacio. |
+
+Por defecto **no toca** `.openbridge/app.json` ni `.openbridge/data/**`. Para
+incluirlos: `--data` (solo `app.json`) o `--data-all` (ademas `data/**`).
+Flags: `--dry-run`, `--yes`, `--no-build`, `--host <h>`.
+
+Cada archivo se sube **por trozos a un nombre temporal**, se verifica el tamano
+y recien entonces se renombra al destino. Asi un `451` del hosting (que en
+transferencias grandes dejaba el archivo en 0 bytes) no rompe el sitio.
+
 ## 2. Configurar `.openbridge/app.json`
 
 > **Nunca subas el `app.json` de ejemplo** (`.openbridge.example/app.json`): sus

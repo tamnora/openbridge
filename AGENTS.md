@@ -17,6 +17,8 @@ Guia para agentes que trabajen en este repo.
   (ver mas abajo).
 - Hub PHP (opcional, para hosting): `node scripts/build-php-hub.mjs` arma
   `php/dist/` (backend + front compartido). Probar: `php -S 127.0.0.1:8799 -t php/dist`.
+- Deploy del hub al hosting (solo el dueno): `npm run deploy:hub -- status|sync|push`.
+  Credenciales en `.deploy.env` (gitignored). Ver mas abajo.
 
 No hay linter con reglas todavia (`npm run lint` solo hace `node --check`).
 Antes de cerrar un cambio, corre `npm test` y `npm run lint`.
@@ -45,6 +47,8 @@ Antes de cerrar un cambio, corre `npm test` y `npm run lint`.
 - Release (local): `scripts/release.mjs` (fuera del paquete npm)
 - Hub PHP (hosting): `php/app/` (`api.php`, `lib.php`, `hub.php`) ·
   `scripts/build-php-hub.mjs` · `docs/DEPLOY-PHP.md`
+- Deploy del hub: `scripts/deploy-php-hub.mjs` (fuera del paquete npm) ·
+  credenciales `.deploy.env` · manifiesto `.deploy-cache/` · backups `backups/`
 
 ## Reglas
 
@@ -53,6 +57,10 @@ Antes de cerrar un cambio, corre `npm test` y `npm run lint`.
 - El frontend del hub PHP **se copia** desde `src/web/assets` y `src/web/templates`
   (no duplicar `app.js`/`chat.html`): editar en `src/web` y correr
   `node scripts/build-php-hub.mjs`. `php/dist/` esta en `.gitignore`.
+- El deploy del hub **nunca** pisa `.openbridge/app.json` ni `.openbridge/data/**`
+  del server salvo `--data`/`--data-all`. Subir siempre por trozos + verificar
+  tamano + rename (el hosting aborta transferencias grandes con `451`).
+- No commitear `.deploy.env`, `.deploy-cache/` ni `backups/` (gitignored).
 - Mantener `TODO.md` y `CHANGELOG.md` al dia cuando cierres un pendiente.
 - No hacer commit ni push salvo que el usuario lo pida.
 
@@ -76,3 +84,29 @@ Actualiza `package.json` y `CHANGELOG.md`, commitea `chore(release): vX.Y.Z`,
 taggea `vX.Y.Z`, hace push a GitHub y publica en npm. Para promover un
 prerelease a produccion:
 `npm dist-tag add @danieltmn/openbridge@X.Y.Z latest`.
+
+## Deploy del hub (privado)
+
+`scripts/deploy-php-hub.mjs` (no se incluye en el paquete npm) sube `php/dist/`
+al hosting por FTPS con `curl`, sin dependencias. Credenciales en `.deploy.env`
+(gitignored; ver `.deploy.env.example`): `DEPLOY_HOST`, `DEPLOY_USER`,
+`DEPLOY_PASS`, `DEPLOY_PROTOCOL=ftps`, `DEPLOY_PORT=21`, `DEPLOY_REMOTE=/`,
+`DEPLOY_LOCAL=php/dist`, `DEPLOY_INSECURE=1`.
+
+- `npm run deploy:hub -- status`: diferencias local vs server (no toca nada).
+- `npm run deploy:hub -- sync`: sube nuevos, actualiza cambiados y borra
+  obsoletos gestionados.
+- `npm run deploy:hub -- push <archivo...>`: sube **solo** esos archivos
+  (relativos a `php/dist`), ideal para probar un cambio puntual.
+- `backup` / `restore <carpeta>`: baja o repone `.openbridge/app.json` +
+  `.openbridge/data/**` (`backup --all` = docroot completo).
+- `reset [--keep-data|--wipe-data] --yes`: backup, wipe total y re-sube.
+- `prune`, `chmod`, `init`: limpieza, permisos y primer deploy.
+
+Por defecto **no toca** `.openbridge/app.json` ni `.openbridge/data/**`; para
+incluirlos usar `--data` (solo `app.json`) o `--data-all` (ademas `data/**`).
+Flags globales: `--dry-run`, `--yes`, `--no-build`, `--host <h>`.
+
+Cada archivo se sube **por trozos a un nombre temporal**, se verifica el tamano
+y recien se renombra al destino: un `451` del hosting (que en transferencias
+grandes dejaba el archivo en 0 bytes) no rompe el sitio. Ver `docs/DEPLOY-PHP.md`.

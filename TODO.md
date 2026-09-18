@@ -104,8 +104,13 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
       (`data/.preview.json`), cola de comandos acotada por bytes, aislamiento
       entre inquilinos (`respond`/`session_import`/`session_tokens`), remember-me
       con `pv` y push por dueno.
-- [ ] **Desplegar** en cPanel (subdominio + SSL, subir `php/dist`, `data/` 0755/0775)
-      y emparejar las PCs reales. Confirmar que el hosting tenga `sodium`.
+- [x] **Desplegar** en cPanel (subdominio + SSL, subir `php/dist`, `data/` 0755/0775).
+      El hub corre en `https://openbridge.tamnora.com`.
+- [x] Deploy automatizado por FTPS (`scripts/deploy-php-hub.mjs`): `status`, `sync`,
+      `push <archivos>`, `backup`/`restore`, `reset`, `prune`, `chmod`, `init`;
+      subida por trozos con verificacion + rename (evita dejar archivos en 0 ante
+      el `451` del hosting). Credenciales en `.deploy.env` (gitignored).
+- [ ] Emparejar las PCs reales contra el hub y confirmar que el hosting tenga `sodium`.
 - [ ] Backport del pairing/dueno al hub Node (paridad; hoy solo PHP).
 - [ ] Backport al hub Node de las mejoras del informe (aislamiento en `respond`,
       push por dueno, remember con `pv`) para mantener paridad de comportamiento.

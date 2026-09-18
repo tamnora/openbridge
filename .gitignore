@@ -27,6 +27,10 @@ Thumbs.db
 
 # Credenciales locales (nunca commitear)
 .npmrc
+# Deploy del hub PHP: credenciales, manifiesto y backups locales
+.deploy.env
+.deploy-cache/
+backups/
 
 # Artefactos temporales de Playwright MCP
 .playwright-mcp/

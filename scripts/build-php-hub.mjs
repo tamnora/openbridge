@@ -53,4 +53,9 @@ if (fs.existsSync(ownApp)) {
     console.log('       node scripts/gen-hub-app.mjs --base php/app --url https://tu-dominio');
 }
 
+// Version del hub para el front (la muestra el sidebar). Fuente unica:
+// package.json. chat.php la lee de version.txt.
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+fs.writeFileSync(path.join(distDir, 'version.txt'), pkg.version + '\n');
+
 console.log('php/dist listo en ' + distDir);
