@@ -26,7 +26,7 @@ const DUMMY_HASH = { algo: 'scrypt', salt: '00000000000000000000000000000000', h
 // Acciones que solo puede hacer un admin.
 const ADMIN_ONLY_ACTIONS = new Set(['session_delete']);
 // Comandos del puente que mutan algo (procesos, tuneles, revertir).
-const OC_MUTATING = new Set(['proc_start', 'proc_stop', 'tunnel_start', 'tunnel_stop', 'git_checkout']);
+const OC_MUTATING = new Set(['proc_start', 'proc_stop', 'tunnel_start', 'tunnel_stop', 'git_checkout', 'session_sync_all']);
 
 async function renderTpl(name, vars) {
     const tpl = await fsp.readFile(path.join(TEMPLATES, name), 'utf8');
@@ -213,6 +213,8 @@ const OC_ALLOWED = {
     proc_log: ['arg', 'arg'],
     proc_detect: ['path'],
     port_free: ['arg'],
+    session_sync: ['arg', 'path'],
+    session_sync_all: [],
 };
 
 function ocArgValido(tipo, valor) {
@@ -457,8 +459,21 @@ async function handleApi(ctx) {
             if (msgs.length > 400) msgs = msgs.slice(-400);
             const tokens = Math.max(0, parseInt(body.tokens, 10) || 0);
             const cost = Math.max(0, parseFloat(body.cost) || 0);
-            const result = await store.sessionImport(oc, name, folder, model, agent, updated, msgs, tokens, cost, bridge);
+            const rename = !!body.rename;
+            const result = await store.sessionImport(oc, name, folder, model, agent, updated, msgs, tokens, cost, bridge, rename);
             if (!result.ok) return ok(result, 400);
+            return ok(result);
+        }
+        case 'session_reconcile': {
+            if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
+            const bridge = reqBridge(req, query);
+            const known = Array.isArray(body.known)
+                ? body.known.map((x) => String(x)).filter((x) => /^ses_[A-Za-z0-9]{4,64}$/.test(x)).slice(0, 20000)
+                : [];
+            const folders = Array.isArray(body.folders)
+                ? body.folders.map((f) => store.mbSubstr(String(f), 0, 500)).slice(0, 2000)
+                : [];
+            const result = await store.sessionReconcile(known, folders, bridge);
             return ok(result);
         }
         case 'session_tokens': {

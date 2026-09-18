@@ -512,11 +512,39 @@ if ($action === 'session_import') {
     }
     $tokens = max(0, (int)($body['tokens'] ?? 0));
     $cost = max(0.0, (float)($body['cost'] ?? 0));
-    $res = session_import($oc, $name, $folder, $model, $agent, $updated, $msgs, $tokens, $cost, $bridge);
+    $rename = !empty($body['rename']);
+    $res = session_import($oc, $name, $folder, $model, $agent, $updated, $msgs, $tokens, $cost, $bridge, $rename);
     if (empty($res['ok'])) {
         json_response($res, 400);
     }
     json_response($res);
+}
+
+// Reconciliación de bajas: el puente informa qué sesiones ve y en qué carpetas
+// escaneó; el hub borra las importadas de ese puente que ya no existen.
+if ($action === 'session_reconcile') {
+    if (!check_bridge_token($_SERVER)) {
+        json_response(['ok' => false, 'error' => 'Token inválido'], 401);
+    }
+    $bridge = resolve_request_bridge();
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body)) {
+        json_response(['ok' => false, 'error' => 'Body inválido'], 400);
+    }
+    $known = [];
+    if (isset($body['known']) && is_array($body['known'])) {
+        foreach (array_slice($body['known'], 0, 20000) as $x) {
+            $x = (string)$x;
+            if (preg_match('/^ses_[A-Za-z0-9]{4,64}$/', $x)) $known[] = $x;
+        }
+    }
+    $folders = [];
+    if (isset($body['folders']) && is_array($body['folders'])) {
+        foreach (array_slice($body['folders'], 0, 2000) as $f) {
+            $folders[] = mb_substr((string)$f, 0, 500);
+        }
+    }
+    json_response(session_reconcile($known, $folders, $bridge));
 }
 
 // Refresco liviano de tokens/costo de un chat web ya vinculado (sin mensajes).
@@ -1172,10 +1200,13 @@ $OC_ALLOWED = [
     'proc_detect' => ['path'],
     // Libera un puerto TCP (pid que escucha) cuando un dev server falla con EADDRINUSE
     'port_free' => ['arg'],
+    // Sincronización manual del historial (botones de la web)
+    'session_sync' => ['arg', 'path'],
+    'session_sync_all' => [],
 ];
 
-// Comandos que mutan algo (procesos, túneles, revertir): solo admin.
-$OC_MUTATING = ['proc_start', 'proc_stop', 'tunnel_start', 'tunnel_stop', 'git_checkout'];
+// Comandos que mutan algo (procesos, túneles, revertir, sync total): solo admin.
+$OC_MUTATING = ['proc_start', 'proc_stop', 'tunnel_start', 'tunnel_stop', 'git_checkout', 'session_sync_all'];
 
 function oc_arg_valido($tipo, $valor) {
     $a = (string)$valor;

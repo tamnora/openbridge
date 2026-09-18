@@ -69,6 +69,7 @@ var els = {
     viewMcp: document.getElementById('viewMcp'),
     viewDevices: document.getElementById('viewDevices'),
     btnPanel: document.getElementById('btnPanel'),
+    btnSync: document.getElementById('btnSync'),
     rpTreePane: document.getElementById('rpTreePane'),
     rpPreviewPane: document.getElementById('rpPreviewPane'),
     rpPvPort: document.getElementById('rpPvPort'),
@@ -2121,6 +2122,13 @@ function updateProcRow(msgs) {
 }
 if (els.procrow) document.getElementById('btnStop').addEventListener('click', cancelCurrentRun);
 
+// Muestra el boton de sync solo si la sesion abierta esta vinculada a opencode.
+function updateSyncBtn() {
+    if (!els.btnSync) return;
+    var s = state.currentSession;
+    els.btnSync.style.display = (s && s.opencode_session) ? '' : 'none';
+}
+
 function renderChat(session, messages) {
     // Un chat abierto desde otra vista (búsqueda global, link directo) puede
     // pertenecer a otra PC: se pasa al puente dueño para ver su catálogo.
@@ -2140,6 +2148,7 @@ function renderChat(session, messages) {
         els.hTitle.textContent = session.name || 'chat';
         els.hSub.textContent = sessionSubtitle(session);
     }
+    updateSyncBtn();
     var msgs = state.messages;
     var chatQuery = (state.chatSearch && state.chatSearch.query) || '';
     // Render completo solo al cambiar de chat o al buscar; el resto es incremental.
@@ -2261,6 +2270,7 @@ function goHome() {
     state.currentId = null;
     state.currentSession = null;
     state.chatSearch = null;
+    updateSyncBtn();
     showView('home');
     loadSessions();
     rpRefresh();
@@ -3762,6 +3772,7 @@ function renderSessionsView() {
         + '<div class="view-sub">' + list.length + ' sesión(es) vinculada(s)</div></div>'
         + '<div class="files-toolbar">'
         + '<button type="button" class="linkbtn" id="sessionsReload">↻ recargar</button>'
+        + (isAdmin() ? '<button type="button" class="linkbtn" id="sessionsSyncAll" title="Reimportar todo desde la PC y reconciliar bajas">⇄ sync total</button>' : '')
         + '</div>';
     if (!list.length) {
         html += '<div class="placeholder">Todavía no hay sesiones con opencode_session vinculado.</div>';
@@ -3783,6 +3794,8 @@ function renderSessionsView() {
     els.viewSessions.innerHTML = html;
     var reload = document.getElementById('sessionsReload');
     if (reload) reload.addEventListener('click', loadSessionsView);
+    var syncAll = document.getElementById('sessionsSyncAll');
+    if (syncAll) syncAll.addEventListener('click', syncAllSessions);
     var opens = els.viewSessions.querySelectorAll('[data-open]');
     for (var j = 0; j < opens.length; j++) {
         (function (btn) {
@@ -4010,6 +4023,46 @@ async function ocCommand(cmd, args, tries, gapMs) {
     }
     return { ok: false, error: 'el puente tardó demasiado (¿está encendido?)' };
 }
+
+// Sync manual de la sesión abierta: fuerza al puente a reexportarla de opencode.
+async function syncCurrentSession() {
+    var s = state.currentSession;
+    if (!s || !s.opencode_session) { toast('esta sesión no está vinculada a opencode', 'error'); return; }
+    var btn = els.btnSync;
+    if (btn) btn.disabled = true;
+    toast('sincronizando sesión…', '');
+    var res = await ocCommand('session_sync', [s.opencode_session, s.folder || ''], 90, 1500);
+    if (btn) btn.disabled = false;
+    if (!res.ok) { toast(res.error || 'no se pudo sincronizar', 'error'); return; }
+    var added = (res.data && res.data.added) || 0;
+    toast(added > 0 ? (added + ' mensaje(s) nuevo(s)') : 'la sesión ya estaba al día', 'ok');
+    loadHistory(state.currentId, false);
+    loadSessions();
+}
+
+// Sync total (admin): reimporta todo y reconcilia bajas en el hub.
+async function syncAllSessions() {
+    if (!confirm('Reimportar TODAS las sesiones de opencode y borrar en el hub las que ya no existen en la PC. Puede tardar. ¿Seguir?')) return;
+    toast('sincronizando todo…', '');
+    var enq = await api('api.php?action=run_oc', apiCsrf('POST', { cmd: 'session_sync_all', args: [] }));
+    if (!enq.ok) { toast(enq.error || 'no se pudo encolar', 'error'); return; }
+    for (var i = 0; i < 450; i++) {
+        await sleepMs(i < 3 ? 500 : 2000);
+        var st = await api('api.php?action=oc_command_status&id=' + enq.id);
+        if (st.ok && (st.status === 'done' || st.status === 'error')) {
+            if (st.status === 'error') { toast(st.error || 'error del puente', 'error'); return; }
+            var d = null;
+            try { d = JSON.parse(st.result); } catch (e) { d = null; }
+            toast('sync total: ' + ((d && d.imported) || 0) + ' importada(s), ' + ((d && d.deleted) || 0) + ' borrada(s)', 'ok');
+            loadSessions();
+            loadSessionsView();
+            return;
+        }
+    }
+    toast('el sync total sigue en la PC; revisá en un rato', '');
+}
+
+if (els.btnSync) els.btnSync.addEventListener('click', syncCurrentSession);
 
 var procTimer = null;
 var procLogBox = null;

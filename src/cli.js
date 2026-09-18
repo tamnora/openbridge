@@ -450,6 +450,20 @@ async function cmdServer(argv) {
     }
     app.baseUrl = tun.url || ('http://' + host + ':' + port);
 
+    // Un solo puente por casa: si quedo uno suelto (`bridge --background`,
+    // `--reload` o autostart), lo paramos y arrancamos el del server, que apunta
+    // al API local. Asi `openbridge server` siempre termina con su propio puente
+    // y nunca quedan dos corriendo.
+    const strayBridge = bridgePid();
+    if (strayBridge && pidAlive(strayBridge) && strayBridge !== process.pid) {
+        log.log('habia un puente corriendo (pid ' + strayBridge + '); lo reinicio con este server');
+        killPid(strayBridge);
+        for (let i = 0; i < 25 && pidAlive(strayBridge); i++) {
+            await new Promise((r) => setTimeout(r, 200));
+        }
+        try { fs.unlinkSync(paths.bridgeLockPath()); } catch (e) { /* nada */ }
+    }
+
     // Puente (proceso hijo). En POSIX detached crea su propio grupo para poder
     // matar tambien a los opencode que lance.
     const bridgePath = path.join(__dirname, 'bridge', 'bridge.js');
@@ -498,23 +512,50 @@ async function cmdServer(argv) {
 async function cmdStop() {
     const rt = readRuntime();
     const pid = rt && rt.pid ? rt.pid : parseInt((() => { try { return fs.readFileSync(paths.pidPath(), 'utf8'); } catch (e) { return ''; } })(), 10);
-    if (!pid || !pidAlive(pid)) {
-        clearRuntime();
+    const stopped = [];
+    if (pid && pidAlive(pid)) {
+        killPid(pid);
+        if (rt && Array.isArray(rt.children)) {
+            for (const c of rt.children) killPid(c);
+        }
+        stopped.push('server ' + pid);
+    }
+    // El puente puede vivir suelto (`bridge --background`/`--reload`/autostart) y
+    // no figurar en runtime.children: lo cerramos igual para no dejar procesos.
+    const bpid = bridgePid();
+    if (bpid && pidAlive(bpid) && bpid !== pid) {
+        killPid(bpid);
+        stopped.push('puente ' + bpid);
+    }
+    clearRuntime();
+    if (!stopped.length) {
         console.log('OpenBridge no esta corriendo.');
         return 0;
     }
-    killPid(pid);
-    if (rt && Array.isArray(rt.children)) {
-        for (const c of rt.children) killPid(c);
-    }
-    clearRuntime();
-    console.log('OpenBridge detenido (pid ' + pid + ').');
+    console.log('OpenBridge detenido (' + stopped.join(', ') + ').');
     return 0;
 }
 
 async function printStatus() {
     const rt = readRuntime();
-    if (!rt || !pidAlive(rt.pid)) {
+    const serverLive = !!(rt && rt.pid && pidAlive(rt.pid));
+    const bpid = bridgePid();
+    const bridgeLive = !!(bpid && pidAlive(bpid));
+    if (!serverLive) {
+        // Modo puente remoto: no hay server local, pero el puente puede correr
+        // suelto (bridge --background/--reload/autostart).
+        if (bridgeLive) {
+            console.log('OpenBridge (puente): corriendo (pid ' + bpid + ')');
+            try {
+                const cfg = config.readBridge();
+                console.log('  hub    : ' + (cfg.apiUrl || '(sin configurar)'));
+                console.log('  id     : ' + (cfg.bridgeId || '(sin id)'));
+                console.log('  nombre : ' + (cfg.bridgeName || ''));
+            } catch (e) { /* nada */ }
+            console.log('  log    : ' + paths.bridgeLogPath());
+            console.log('  detener: openbridge bridge --stop  ·  todo: openbridge stop');
+            return true;
+        }
         console.log('OpenBridge: detenido');
         if (paths.exists()) {
             console.log('  carpeta: ' + paths.baseDir());
@@ -542,6 +583,11 @@ async function printStatus() {
         const sessions = await store.sessionsListFull();
         console.log('  chats  : ' + sessions.length);
     } catch (e) { /* sin datos todavia */ }
+    // Duplicado: un puente vivo que no es hijo de este server.
+    const children = Array.isArray(rt.children) ? rt.children : [];
+    if (bridgeLive && !children.includes(bpid)) {
+        console.log('  aviso  : hay un puente extra (pid ' + bpid + '); `openbridge stop` lo cierra');
+    }
     const target = rt.publicUrl || rt.localUrl;
     if (target) {
         console.log('');
@@ -554,6 +600,52 @@ async function printStatus() {
 async function cmdStatus() {
     await printStatus();
     return 0;
+}
+
+// monitor: vista viva del server y del puente, para detectar de un vistazo si
+// hay duplicados o si algo se cayo. Solo observa (no reinicia nada).
+async function cmdMonitor(argv) {
+    const { flags } = parseArgs(argv);
+    const interval = Math.max(1, parseInt(flags.interval, 10) || 5);
+    console.log('monitor OpenBridge (cada ' + interval + 's; Ctrl+C para salir)');
+    let last = '';
+    const tick = async () => {
+        const rt = readRuntime();
+        const serverLive = !!(rt && rt.pid && pidAlive(rt.pid));
+        const bpid = bridgePid();
+        const bridgeLive = !!(bpid && pidAlive(bpid));
+        const children = (rt && Array.isArray(rt.children)) ? rt.children : [];
+        const dup = serverLive && bridgeLive && !children.includes(bpid);
+        let online = false;
+        try {
+            const id = (rt && rt.bridge) || await store.soleBridgeId();
+            if (id) online = await store.bridgeOnlineLive(id);
+        } catch (e) { /* sin datos */ }
+        let sessions = 0;
+        try { sessions = (await store.sessionsListFull()).length; } catch (e) { /* sin datos */ }
+        const parts = [
+            serverLive ? ('server ' + rt.pid) : 'server -',
+            bridgeLive ? ('puente ' + bpid) : 'puente -',
+        ];
+        if (bridgeLive) parts.push(online ? 'en linea' : 'sin senal');
+        parts.push(sessions + ' chats');
+        let tag = 'OK';
+        if (dup) tag = 'DUPLICADO: hay un puente extra';
+        else if (!serverLive && !bridgeLive) tag = 'nada corriendo';
+        else if (!bridgeLive) tag = 'sin puente';
+        const body = parts.join(' · ') + ' · ' + tag;
+        if (body !== last) {
+            last = body;
+            console.log('[' + new Date().toLocaleTimeString() + '] ' + body);
+        }
+    };
+    await tick();
+    return new Promise((resolve) => {
+        const t = setInterval(() => { tick().catch(() => {}); }, interval * 1000);
+        const stop = () => { clearInterval(t); console.log(''); resolve(0); };
+        process.on('SIGINT', stop);
+        process.on('SIGTERM', stop);
+    });
 }
 
 // Muestra la URL como QR para escanear desde el celular.
@@ -722,6 +814,30 @@ async function cmdBridge(argv) {
         return 0;
     }
 
+    // --reload: detiene el puente que este corriendo y arranca uno nuevo con la
+    // config/el codigo actual. Sirve para aplicar cambios sin `--stop` manual.
+    if (flags.reload) {
+        // En modo hub local el puente es hijo del server: reiniciarlo por
+        // separado lo dejaria huerfano. Se reinicia todo el server.
+        const srv = readRuntime();
+        if (srv && srv.pid && pidAlive(srv.pid)) {
+            console.error('Hay un server corriendo (pid ' + srv.pid + '); el puente lo maneja el server.');
+            console.error('Reinicia todo con: openbridge stop && openbridge server');
+            return 1;
+        }
+        const pid = bridgePid();
+        if (pid && pidAlive(pid)) {
+            killPid(pid);
+            console.log('Puente anterior detenido (pid ' + pid + '). Reiniciando...');
+            // En Windows taskkill es asincrono: esperamos a que el pid muera
+            // para que el lock no bloquee al puente nuevo.
+            for (let i = 0; i < 25 && pidAlive(pid); i++) {
+                await new Promise((r) => setTimeout(r, 200));
+            }
+        }
+        try { fs.unlinkSync(paths.bridgeLockPath()); } catch (e) { /* nada */ }
+    }
+
     // Permite apuntar a otro hub sin editar config.json a mano.
     const env = { ...process.env, OPENBRIDGE_HOME: paths.baseDir() };
     if (flags.api) env.OPENBRIDGE_API_URL = String(flags.api);
@@ -730,8 +846,13 @@ async function cmdBridge(argv) {
     if (flags.name) env.OPENBRIDGE_BRIDGE_NAME = String(flags.name);
     const bridgePath = path.join(__dirname, 'bridge', 'bridge.js');
 
+    // `--reload` reinicia en segundo plano por defecto (aplicar cambios y
+    // seguir corriendo es lo esperable); `--foreground`/`--stream` lo evita.
+    const wantBackground = !!(flags.background || flags.bg || flags.detach || flags.d
+        || (flags.reload && !flags.foreground && !flags.fg && !flags.stream));
+
     // Segundo plano: detached + stdio ignorado; sobrevive al cierre de la consola.
-    if (flags.background || flags.bg || flags.detach || flags.d) {
+    if (wantBackground) {
         const existing = bridgePid();
         if (existing && pidAlive(existing)) {
             console.log('El puente ya corre en segundo plano (pid ' + existing + ').');
@@ -1112,6 +1233,18 @@ function autostartPath() {
     return path.join(os.homedir(), '.config', 'systemd', 'user', 'openbridge.service');
 }
 
+// Literal de PowerShell con comillas simples (las comillas simples internas se
+// duplican). Evita el `\"` de JSON.stringify, que PowerShell no entiende y
+// rompia la creacion del acceso directo del autostart en Windows.
+function psQuote(s) {
+    return "'" + String(s).replace(/'/g, "''") + "'";
+}
+
+// Literal de VBScript (comillas dobles internas duplicadas).
+function vbsStr(s) {
+    return '"' + String(s).replace(/"/g, '""') + '"';
+}
+
 async function cmdAutostart(argv) {
     const action = String(argv[0] || '').toLowerCase();
     if (action !== 'install' && action !== 'remove') {
@@ -1122,8 +1255,11 @@ async function cmdAutostart(argv) {
     const node = process.execPath;
     const target = autostartPath();
     if (action === 'remove') {
-        try { fs.unlinkSync(target); console.log('autostart quitado: ' + target); }
-        catch (e) { console.log('no habia autostart instalado.'); }
+        let removed = false;
+        try { fs.unlinkSync(target); removed = true; } catch (e) { /* no estaba */ }
+        // El lanzador oculto de Windows (si existe).
+        try { fs.unlinkSync(path.join(paths.home(), 'autostart.vbs')); } catch (e) { /* nada */ }
+        console.log(removed ? ('autostart quitado: ' + target) : 'no habia autostart instalado.');
         return 0;
     }
     try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (e) { /* nada */ }
@@ -1133,15 +1269,42 @@ async function cmdAutostart(argv) {
     let acfg = { apiUrl: '' };
     try { acfg = config.readBridge(); } catch (e) { /* nada */ }
     const remote = /^https?:\/\//i.test(acfg.apiUrl || '') && !/127\.0\.0\.1|localhost/i.test(acfg.apiUrl);
-    const runArgs = remote ? 'bridge' : 'server --stream --no-tunnel';
-    if (process.platform === 'win32') {
+    // En Windows el lanzador es un acceso directo: arrancamos detached
+    // (`--background`) para que no quede ninguna consola abierta. En macOS/Linux
+    // el servicio del sistema (launchd/systemd) supervisa el proceso, asi que
+    // corre en primer plano y KeepAlive/Restart lo reinician si hace falta.
+    const isWin = process.platform === 'win32';
+    let runArgs;
+    if (remote) {
+        runArgs = isWin ? 'bridge --background' : 'bridge';
+    } else {
+        runArgs = isWin ? 'server --no-tunnel' : 'server --stream --no-tunnel';
+    }
+    if (isWin) {
+        // Un .lnk a node.exe abre una consola (WindowStyle 0 no lo evita). Para
+        // que no quede NINGUNA ventana, el acceso directo apunta a wscript.exe
+        // con un .vbs que lanza node oculto (window style 0). El comando usa
+        // `--background`, asi que el lanzador sale enseguida y queda solo el
+        // proceso detached (sin consola).
+        const wscript = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wscript.exe');
+        const vbsPath = path.join(paths.home(), 'autostart.vbs');
+        const vbsCmd = '"' + node + '" "' + bin + '" ' + runArgs + ' --dir "' + home + '"';
+        const vbs = [
+            'Set sh = CreateObject("WScript.Shell")',
+            'sh.Run ' + vbsStr(vbsCmd) + ', 0, False',
+            '',
+        ].join('\r\n');
+        try { fs.writeFileSync(vbsPath, vbs); } catch (e) {
+            console.error('No se pudo escribir el lanzador ' + vbsPath + ': ' + (e.message || e));
+            return 1;
+        }
         const ps = [
             '$ws = New-Object -ComObject WScript.Shell;',
-            '$sc = $ws.CreateShortcut(' + JSON.stringify(target) + ');',
-            '$sc.TargetPath = ' + JSON.stringify(node) + ';',
-            '$sc.Arguments = ' + JSON.stringify('"' + bin + '" ' + runArgs) + ';',
-            '$sc.WorkingDirectory = ' + JSON.stringify(home) + ';',
-            '$sc.WindowStyle = 7;',
+            '$sc = $ws.CreateShortcut(' + psQuote(target) + ');',
+            '$sc.TargetPath = ' + psQuote(wscript) + ';',
+            '$sc.Arguments = ' + psQuote('"' + vbsPath + '"') + ';',
+            '$sc.WorkingDirectory = ' + psQuote(home) + ';',
+            '$sc.WindowStyle = 1;',
             '$sc.Save();',
         ].join(' ');
         const r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true });
@@ -1200,6 +1363,18 @@ async function cmdDoctor() {
             s.listen(app.port, app.host || '127.0.0.1');
         });
         checks.push(['puerto ' + app.port, portFree, portFree ? '' : 'ocupado (¿ya corre OpenBridge?)']);
+
+        // Un solo puente: si el server corre y ademas hay un puente suelto que
+        // no es hijo suyo, es un duplicado.
+        const rt = readRuntime();
+        const serverLive = !!(rt && rt.pid && pidAlive(rt.pid));
+        const bpid = bridgePid();
+        const bridgeLive = !!(bpid && pidAlive(bpid));
+        const children = (rt && Array.isArray(rt.children)) ? rt.children : [];
+        const dup = serverLive && bridgeLive && !children.includes(bpid);
+        checks.push(['puente unico', !dup,
+            dup ? ('hay un puente extra (pid ' + bpid + '); openbridge stop')
+                : (bridgeLive ? ('corriendo (pid ' + bpid + ')') : 'detenido')]);
     }
 
     const webpush = (() => { try { require('web-push'); return true; } catch (e) { return false; } })();
@@ -1272,10 +1447,11 @@ function usage() {
     console.log('  users     Usuarios y roles (list|add|remove|passwd|role|disable|enable)');
     console.log('  stop      Detiene el server en segundo plano');
     console.log('  status    Estado del server, puente y chats');
+    console.log('  monitor   Estado en vivo (detecta puentes duplicados) [--interval <s>]');
     console.log('  qr        Muestra la URL (publica o local) como QR para el celular');
     console.log('  tunnel    Muestra o cambia el proveedor de tunel (tunnelmole|ngrok|cloudflare|none) [--domain]');
     console.log('  logs      Ultimas lineas de los logs (--follow --server --bridge)');
-    console.log('  bridge    Corre solo el puente (--background | --stop | --status)');
+    console.log('  bridge    Corre solo el puente (--background | --stop | --status | --reload)');
     console.log('  join      Vincula esta PC como puente de un hub (<url> --token --id --name)');
     console.log('  pair      Empareja esta PC con un hub PHP por codigo (<url> [--id --name])');
     console.log('  import    Trae data/ de OpenConex (<data-dir> [--force])');
@@ -1308,6 +1484,7 @@ async function main(argv) {
         case 'server': case 'start': return cmdServer(args.slice(1));
         case 'stop': return cmdStop();
         case 'status': return cmdStatus();
+        case 'monitor': return cmdMonitor(args.slice(1));
         case 'qr': return cmdQr();
         case 'tunnel': return cmdTunnel(args.slice(1));
         case 'logs': return cmdLogs(args.slice(1));

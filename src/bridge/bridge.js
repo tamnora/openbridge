@@ -62,7 +62,7 @@ try {
         let alive = false;
         try { process.kill(prev, 0); alive = true; } catch (e) { /* muerto */ }
         if (alive) {
-            console.error('[bridge] Ya hay un puente corriendo (pid ' + prev + '). Cerrálo primero.');
+            console.error('[bridge] Ya hay un puente corriendo (pid ' + prev + '). Reinicialo con `openbridge bridge --reload` (o cerralo con `openbridge bridge --stop`).');
             process.exit(1);
         }
         console.error('[bridge] lock huérfano (pid ' + prev + ' ya no existe); lo adopto.');
@@ -1312,6 +1312,15 @@ function topWorkspaceFolders() {
     return out;
 }
 
+// `opencode session list` muestra solo la hora ("HH:MM") para las sesiones de
+// hoy y "HH:MM · D/M/YYYY" para las viejas. Como el marcador del barrido
+// compara ese texto, una sesion tocada hoy a las 11:32 y otra manana a las
+// 11:32 colisionaban y no se reimportaba. Se normaliza siempre con fecha.
+function todayStamp() {
+    const d = new Date();
+    return d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear();
+}
+
 // Parsea la tabla de `opencode session list` (columnas: ID, Title, Updated).
 async function listSessionsInFolder(folder) {
     const r = await runCli(['session', 'list'], { cwd: folder, timeout: 30000 });
@@ -1322,10 +1331,12 @@ async function listSessionsInFolder(folder) {
         if (!idm) continue;
         const rest = line.slice(idm[1].length).trim();
         const tm = rest.match(/\s(\d{1,2}:\d{2}(?: · .+)?)$/);
+        let updated = tm ? tm[1] : '';
+        if (updated && updated.indexOf('·') < 0) updated = updated + ' · ' + todayStamp();
         out.push({
             id: idm[1],
             title: (tm ? rest.slice(0, tm.index) : rest).trim(),
-            updated: tm ? tm[1] : '',
+            updated: updated,
         });
     }
     return out;
@@ -1353,7 +1364,9 @@ async function refreshTokens(folder, sess, target) {
 
 // Exporta una sesión de opencode (JSON) y la manda al hosting indicado. El
 // merge del hosting es idempotente (clave rol|fecha|texto): reimportar no duplica.
-async function exportAndImport(folder, sess, target) {
+// `opts.rename` fuerza a que el titulo de opencode pise el nombre del hub (lo usa
+// el sync manual; el barrido normal respeta el nombre si no es por defecto).
+async function exportAndImport(folder, sess, target, opts) {
     const r = await runCli(['export', sess.id], { cwd: folder, timeout: 90000 });
     if (!r.ok || !r.text) throw new Error('export falló' + (r.killed ? ' (timeout)' : ''));
     const data = JSON.parse(r.text);
@@ -1393,7 +1406,7 @@ async function exportAndImport(folder, sess, target) {
     // Tokens de la sesión (sin cache read: es contexto releído, no consumo nuevo).
     const tk = info.tokens || {};
     const tokens = (tk.input || 0) + (tk.output || 0) + (tk.reasoning || 0);
-    await api('session_import', {
+    const res = await api('session_import', {
         opencode_session: sess.id,
         folder: realDir,
         name: String(info.title || sess.title || '').slice(0, 60),
@@ -1402,9 +1415,10 @@ async function exportAndImport(folder, sess, target) {
         agent: 'build',
         tokens: tokens,
         cost: typeof info.cost === 'number' ? info.cost : 0,
+        rename: !!(opts && opts.rename),
         messages: msgs.slice(-400),
     }, target);
-    return realDir;
+    return { realDir: realDir, added: (res && parseInt(res.added, 10)) || 0, session_id: (res && res.session_id) || null };
 }
 
 // Barrido: recorre carpetas (o una lista puntual), compara contra el estado
@@ -1484,7 +1498,8 @@ async function sweepTarget(t, opts) {
                 continue;
             }
             try {
-                const realDir = await exportAndImport(folder, s, t);
+                const res = await exportAndImport(folder, s, t);
+                const realDir = res.realDir;
                 fstate[s.id] = s.updated;
                 if (realDir && realDir !== folder) {
                     // Carpeta canónica de la sesión: queda marcada también ahí
@@ -1515,6 +1530,126 @@ async function sweepTarget(t, opts) {
         log('barrido de sesiones (' + t + '): ' + imported + ' importada(s)');
     }
     return imported;
+}
+
+// Carpetas para un sync forzado: nivel 1 del workspace + las ya conocidas por
+// barridos previos (incluye subcarpetas canónicas de proyectos compartidos).
+function forcedFolders(target) {
+    const set = new Set();
+    for (const f of topWorkspaceFolders()) set.add(f);
+    for (const f of Object.keys(target.folders || {})) set.add(f);
+    return Array.from(set);
+}
+
+// Sync manual "total" de un destino: reimporta todo ignorando el estado local
+// (recupera un hub que perdió datos) y reconcilia bajas (la PC manda). Corre
+// desde un comando de la web, asi que NO usa el chequeo de `busy`; igual
+// respeta `activeMsgSession` para no pisar una ejecución en curso.
+async function forcedSyncAll(t) {
+    if (sweepRunning) return { imported: 0, deleted: 0, skipped: true };
+    if (activeMsgSession) return { imported: 0, deleted: 0, error: 'hay un mensaje en curso; reintentá en un momento' };
+    sweepRunning = true;
+    const target = targetState(t);
+    let imported = 0;
+    const known = new Set();
+    const scanned = new Set();
+    const seen = new Set();
+    const TOPE = 200;
+    try {
+        for (const folder of forcedFolders(target)) {
+            if (activeMsgSession) break;
+            if (imported >= TOPE) break;
+            let sessions = [];
+            try {
+                sessions = await listSessionsInFolder(folder);
+            } catch (e) { continue; }
+            if (!sessions.length) continue;
+            scanned.add(folder);
+            const fstate = target.folders[folder] || (target.folders[folder] = {});
+            for (const s of sessions) {
+                known.add(s.id);
+                if (seen.has(s.id)) { fstate[s.id] = s.updated; continue; }
+                seen.add(s.id);
+                try {
+                    const res = await exportAndImport(folder, s, t, { rename: true });
+                    fstate[s.id] = s.updated;
+                    if (res.realDir && res.realDir !== folder) {
+                        scanned.add(res.realDir);
+                        const rf = target.folders[res.realDir] || (target.folders[res.realDir] = {});
+                        rf[s.id] = s.updated;
+                    }
+                    saveSyncState();
+                    imported++;
+                } catch (e) {
+                    log('sync total (' + t + '): no pude importar ' + s.id + ': ' + e.message);
+                }
+                if (imported >= TOPE) break;
+            }
+        }
+        // Reconciliar bajas: solo sesiones de este puente, importadas, cuya
+        // carpeta fue escaneada y cuyo opencode_session ya no existe en la PC.
+        let deleted = 0;
+        try {
+            const res = await api('session_reconcile', {
+                known: Array.from(known),
+                folders: Array.from(scanned),
+            }, t);
+            deleted = (res && parseInt(res.deleted, 10)) || 0;
+        } catch (e) {
+            log('sync total (' + t + '): no pude reconciliar bajas: ' + e.message);
+        }
+        target.fullScanTs = Date.now();
+        saveSyncState();
+        log('sync total (' + t + '): ' + imported + ' importada(s), ' + deleted + ' borrada(s)');
+        return { imported: imported, deleted: deleted };
+    } finally {
+        sweepRunning = false;
+    }
+}
+
+// Sync manual de una sesion puntual (boton en la vista del chat). Fuerza el
+// export/import aunque el estado local diga que no cambió.
+async function sessionSyncOne(cmd) {
+    const t = cmd._t || activeMode;
+    const oc = String((cmd.args && cmd.args[0]) || '').trim();
+    const folder = String((cmd.args && cmd.args[1]) || '').trim();
+    if (!/^ses_[A-Za-z0-9]{4,64}$/.test(oc)) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: 'opencode_session invalido' }, t);
+        return;
+    }
+    const dir = folder || (config.workspace ? path.resolve(config.workspace) : '');
+    if (!dir) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: 'sin carpeta ni workspace' }, t);
+        return;
+    }
+    try {
+        const res = await exportAndImport(dir, { id: oc, title: '' }, t, { rename: true });
+        await api('command_done', {
+            id: cmd.id, ok: true, error: '',
+            text: JSON.stringify({ added: res.added, session_id: res.session_id }),
+        }, t);
+        log('sync sesion ' + oc + ' ok (' + res.added + ' mensajes nuevos)');
+    } catch (e) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: e.message }, t);
+        log('sync sesion ' + oc + ' error: ' + e.message);
+    }
+}
+
+async function sessionSyncAll(cmd) {
+    const t = cmd._t || activeMode;
+    try {
+        const res = await forcedSyncAll(t);
+        if (res.error) {
+            await api('command_done', { id: cmd.id, ok: false, text: '', error: res.error }, t);
+            return;
+        }
+        await api('command_done', {
+            id: cmd.id, ok: true, error: '',
+            text: JSON.stringify({ imported: res.imported, deleted: res.deleted, skipped: !!res.skipped }),
+        }, t);
+    } catch (e) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: e.message }, t);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2360,6 +2495,9 @@ async function handleCommand(cmd) {
     if (cmd.name === 'proc_log') { await procLog(cmd); return; }
     if (cmd.name === 'proc_detect') { await procDetect(cmd); return; }
     if (cmd.name === 'port_free') { await portFree(cmd); return; }
+    // Sincronizacion manual del historial (botones de la web).
+    if (cmd.name === 'session_sync') { await sessionSyncOne(cmd); return; }
+    if (cmd.name === 'session_sync_all') { await sessionSyncAll(cmd); return; }
     // Mapea el nombre "interno" al subcomando real de opencode.
     // Whitelist cerrada; cualquier nombre fuera de acá se rechaza.
     const MAP = {
@@ -2435,13 +2573,16 @@ async function tick(opts) {
 
     busy = true;
     const involvedTargets = new Set();
+    // Declarados fuera del try: el finally los necesita para cortar el
+    // intervalo del poll liviano. Si quedaran dentro, un ReferenceError en el
+    // finally salteaba el `busy = false` y el barrido de sesiones se apagaba.
+    let liteRunning = false;
+    let liteTimer = null;
     try {
         // Mientras corre un mensaje, atender SOLO comandos (fs/procesos/
         // túneles) en paralelo: `tick()` está esperando a runMessage y no
         // volverá a correr hasta terminar, así que sin esto la web remota se
         // queda ciega durante ejecuciones largas (archivos, procs, túneles).
-        let liteRunning = false;
-        let liteTimer = null;
         const litePoll = async () => {
             if (liteRunning) return;
             liteRunning = true;
@@ -2520,12 +2661,15 @@ async function tick(opts) {
             await syncCatalog({ silent: true });
         }
     } finally {
-        if (liteTimer) { clearInterval(liteTimer); liteTimer = null; }
+        // El cleanup no debe depender de nada que pueda fallar: primero se
+        // libera el estado, despues el intervalo.
         activeRunFolder = null;
         activeMsgSession = null;
         activeMsgTarget = null;
         busy = false;
         for (const t of involvedTargets) notifyBusy(t, null);
+        try { if (liteTimer) clearInterval(liteTimer); } catch (e) { /* nada */ }
+        liteTimer = null;
         // El watcher pudo pedir un barrido mientras opencode estaba ocupado:
         // se corre ahora que terminó (en vez de perderse).
         if (sweepPending) { sweepPending = false; scheduleSweep('pendiente'); }

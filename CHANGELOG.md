@@ -4,6 +4,54 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Corregido
+
+- Autostart en Windows: el acceso directo se generaba con `\"` (escapado de
+  JSON) que PowerShell no parsea, asi que `autostart install` fallaba. Ahora usa
+  literales validos.
+- **Bug critico del puente**: `liteTimer` se declaraba dentro del `try` de
+  `tick()` y se usaba en el `finally`; el `ReferenceError` resultante saltaba el
+  `busy = false`, dejaba el barrido de sesiones pausado para siempre y filtraba
+  intervalos de poll contra el hosting (de ahi los `fetch failed` y el costo/
+  tokens congelados por sesion). Ahora se declara fuera del `try` y el cleanup
+  corre siempre.
+- Marcador del barrido normalizado con fecha: `opencode session list` muestra
+  solo `HH:MM` para las sesiones de hoy, lo que hacia colisionar el marcador
+  entre dias y salteaba reimportaciones.
+
+### Agregado
+
+- **Un solo puente garantizado**: `openbridge server` detiene cualquier puente
+  suelto (de `bridge --background`/`--reload`/autostart) y arranca el suyo; un
+  segundo `bridge` se rechaza por el lock. `openbridge stop` cierra **todo**
+  (server + puente suelto), no solo el arbol del server.
+- `openbridge monitor`: estado en vivo (server, puente, chats) que avisa si hay
+  un puente duplicado (`--interval <s>`).
+- `openbridge bridge --reload`: detiene el puente que este corriendo y arranca
+  uno nuevo con el codigo/config actuales, sin `--stop` manual. Reinicia en
+  **segundo plano** por defecto (usar `--foreground`/`--stream` para verlo).
+- Sincronizacion manual desde la web: boton **sincronizar** en la sesion abierta
+  (`session_sync`: fuerza el export/import y propaga el titulo de opencode) y
+  **sync total** (solo admin, en la vista "sesiones opencode") que reimporta todo
+  ignorando el estado local y reconcilia bajas (`session_sync_all` +
+  `session_reconcile`). Con la PC como fuente de verdad, borra en el hub las
+  sesiones importadas que ya no existen en la PC y cuya carpeta fue escaneada.
+- Limpieza de `data/*.tmp` huerfanos al arrancar el server.
+
+### Cambiado
+
+- `openbridge status` ahora reporta el puente tambien en modo remoto (sin server
+  local) y avisa si hay un puente extra; `openbridge doctor` verifica "puente
+  unico". `bridge --reload` se niega si hay un server corriendo (el puente lo
+  maneja el server) y sugiere `openbridge stop && openbridge server`.
+- Autostart: en Windows lanza el puente detached (`bridge --background`) via un
+  `.vbs` oculto, sin dejar consola abierta; en macOS/Linux sigue en primer plano
+  porque launchd/systemd supervisan el proceso.
+- `session_import` acepta `rename` (solo lo manda el sync forzado) para que el
+  titulo de opencode pise el nombre del hub, salvo placeholders (`New session - ...`).
+
 ## [0.8.0] - 2026-09-18
 
 

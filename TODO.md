@@ -122,6 +122,13 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Importar mensajes del TUI tambien en sesiones creadas desde la web.
 - [x] Dedupe por `oc_msg` (id de mensaje de opencode) + adopcion del optimista
       de la web, en el hub PHP y Node.
+- [x] Fix del `liteTimer` en `tick()`: el `ReferenceError` en el `finally`
+      dejaba `busy=true` para siempre (barrido pausado) y filtraba intervalos de
+      poll contra el hosting.
+- [x] Marcador del barrido con fecha (evita colisiones `HH:MM` entre dias).
+- [x] Sync manual desde la web: boton **sincronizar** por sesion (`session_sync`)
+      y **sync total** admin (`session_sync_all`) con reconciliacion de bajas
+      (`session_reconcile`), para recuperar hubs que perdieron datos.
 - [ ] Validar en uso real la latencia TUI -> hub y el caso web+TUI.
 
 ## 3. CLI / ciclo de vida
@@ -133,6 +140,10 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] **`passwd`**: cambia la contraseña y detiene el server en ejecución.
 - [x] `init --force`/`passwd` detienen el server antes de reescribir la config.
 - [x] `openbridge update` (auto-actualización): compara con npm y con `--yes` corre `npm i -g`.
+- [x] Un solo puente por casa: lock `.bridge.pid`; `server` detiene un puente
+      suelto y arranca el suyo; `stop` cierra server + puente; `bridge --reload`
+      (segundo plano) se niega si hay server; `status`/`doctor` avisan de
+      duplicados y `monitor` muestra el estado en vivo.
 
 ## 4. Multi-PC (hub + remotas)
 

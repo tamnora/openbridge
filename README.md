@@ -84,12 +84,13 @@ iniciar sesión** una vez; los chats, carpetas, túnel y push se conservan.
 | `openbridge passwd` | Cambia la contraseña de acceso (`--user <nombre>`; detiene el server si corre) |
 | `openbridge users` | Usuarios y roles: `list`, `add`, `remove`, `passwd`, `role`, `disable`, `enable` |
 | `openbridge server` | Arranca app + puente + túnel en **segundo plano** y muestra el estado (`--stream` = primer plano) |
-| `openbridge stop` | Detiene el server y su árbol de procesos |
-| `openbridge status` | Estado, URL, puente en línea y chats |
+| `openbridge stop` | Detiene **todo**: server, túnel y puente (incluido uno suelto en modo remoto) |
+| `openbridge status` | Estado, URL, puente en línea y chats (avisa si hay un puente duplicado) |
+| `openbridge monitor` | Estado en vivo; detecta puentes duplicados (`--interval <s>`) |
 | `openbridge qr` | Muestra la URL (pública o local) como QR para escanear desde el celular |
 | `openbridge tunnel` | Muestra o cambia el proveedor de túnel y su dominio fijo (`--domain`) |
 | `openbridge logs` | Logs (`--follow`, `--server`, `--bridge`) |
-| `openbridge bridge` | Corre **solo** el puente (`--background` = segundo plano, `--stop`, `--status`) |
+| `openbridge bridge` | Corre **solo** el puente (`--background` = segundo plano, `--stop`, `--status`, `--reload`) |
 | `openbridge join` | Vincula esta PC como puente de un hub (`<url> --token --id --name [--background]`) |
 | `openbridge pair` | Empareja esta PC con un **hub PHP** por código (`<url> [--id --name] [--background]`) |
 | `openbridge import` | Trae `data/` de OpenConex (`<data-dir> [--force]`) |
@@ -211,9 +212,15 @@ La PC corre el puente; para que siga tras cerrar la consola:
 ```bash
 openbridge bridge --background     # arranca en segundo plano
 openbridge bridge --status         # ¿corre?
+openbridge bridge --reload         # reinicia en segundo plano (aplica cambios; --foreground para verlo)
 openbridge bridge --stop           # detener
-openbridge autostart install       # arranca solo al iniciar sesión
+openbridge autostart install       # arranca solo al iniciar sesión (sin consola)
 ```
+
+**Un solo puente por casa.** El puente tiene un lock (`.openbridge/.bridge.pid`): un
+segundo intento se rechaza. Además, `openbridge server` para cualquier puente
+suelto y arranca el suyo, y `openbridge stop` cierra todo (server + puente). Para
+verificar: `openbridge status`, `openbridge doctor` o `openbridge monitor`.
 
 ## Túnel y URL estable
 

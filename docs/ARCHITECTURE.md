@@ -99,7 +99,11 @@ local como en remoto:
   `fs_list`, `fs_read`, `proc_list`, `proc_log`, `proc_detect`, `tunnel_list`,
   `git_status`, `git_diff`.
 - Mutantes (solo `admin`): `proc_start`, `proc_stop`, `tunnel_start`,
-  `tunnel_stop`, `git_checkout`.
+  `tunnel_stop`, `git_checkout`, `session_sync_all`.
+- Historial: `session_sync` (reimporta una sesion puntual) y `session_sync_all`
+  (reimporta todo ignorando el estado local); al terminar llama a
+  `session_reconcile`, que borra en el hub las sesiones importadas de ese puente
+  que ya no existen en la PC (solo en carpetas escaneadas).
 
 Las rutas se validan contra el workspace (`procResolveFolder`/`resolveInWorkspace`)
 y los argumentos con una whitelist (`OC_ALLOWED`). `proc_detect` es read-only:

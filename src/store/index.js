@@ -122,6 +122,13 @@ function sessionHasDefaultName(sess) {
     return name === '' || /^Chat \d+$/.test(name);
 }
 
+// Titulo placeholder que opencode genera solo: no sirve para pisar un nombre
+// util del hub en un sync forzado.
+function sessionNamePlaceholder(name) {
+    const n = String(name || '').trim();
+    return n === '' || /^Chat \d+$/.test(n) || /^New session - /.test(n);
+}
+
 function sessionTitleFromPrompt(text) {
     let t = String(text || '').replace(/\s+/gu, ' ').trim();
     if (t === '') return '';
@@ -143,7 +150,7 @@ async function deleteSession(id) {
 }
 
 // Importa (merge idempotente) una sesion de opencode. Mismo esquema que PHP.
-async function sessionImport(ocSession, name, folder, model, agent, updatedTs, messages, tokens = 0, cost = 0, bridge = '') {
+async function sessionImport(ocSession, name, folder, model, agent, updatedTs, messages, tokens = 0, cost = 0, bridge = '', rename = false) {
     const oc = String(ocSession || '').trim();
     if (oc === '') return { ok: false, error: 'opencode_session requerido' };
     const file = paths.bridgeCatalogFile(bridge);
@@ -184,7 +191,11 @@ async function sessionImport(ocSession, name, folder, model, agent, updatedTs, m
             created = true;
         } else {
             const s = sdata.sessions[idx];
-            if (sessionHasDefaultName(s) && name !== '') s.name = mbSubstr(name, 0, 60);
+            if (rename) {
+                if (name !== '' && !sessionNamePlaceholder(name)) s.name = mbSubstr(name, 0, 60);
+            } else if (sessionHasDefaultName(s) && name !== '') {
+                s.name = mbSubstr(name, 0, 60);
+            }
             if (folder !== '' && String(s.folder || '') !== folder) s.folder = folder;
             s.importada = true;
             if (bridgeValidId(bridge) && sessionBridge(s) === '') s.bridge = bridge;
@@ -281,6 +292,34 @@ async function sessionTokens(ocSession, tokens, cost, folder = '', bridge = '') 
         if (folder !== '' && String(s.folder || '') !== folder) s.folder = folder;
         if (bridgeValidId(bridge) && sessionBridge(s) === '') s.bridge = bridge;
     });
+}
+
+// Reconciliacion de bajas: el puente informa que sesiones de opencode ve
+// (`known`) y en que carpetas escaneo (`folders`). Se borran en el hub solo las
+// sesiones importadas de ESE puente, cuya carpeta fue escaneada y cuyo
+// opencode_session ya no existe en la PC. Las que quedan fuera del workspace
+// (carpeta no escaneada) se conservan.
+async function sessionReconcile(known, folders, bridge) {
+    if (!bridgeValidId(bridge)) return { ok: true, deleted: 0 };
+    const knownSet = new Set((Array.isArray(known) ? known : []).map((x) => String(x)));
+    const folderSet = new Set((Array.isArray(folders) ? folders : []).map((f) => normFolder(f)));
+    if (!folderSet.size) return { ok: true, deleted: 0 };
+    const toDelete = [];
+    await sessionsUpdate((sdata) => {
+        const keep = [];
+        for (const s of (sdata.sessions || [])) {
+            const oc = s.opencode_session ? String(s.opencode_session) : '';
+            const orphan = sessionBridge(s) === bridge && s.importada === true && oc !== ''
+                && !knownSet.has(oc) && folderSet.has(normFolder(s.folder));
+            if (orphan) { toDelete.push(parseInt(s.id, 10)); continue; }
+            keep.push(s);
+        }
+        sdata.sessions = keep;
+    });
+    for (const id of toDelete) {
+        try { await fs.unlink(paths.messagesFile(id)); } catch (e) { /* no estaba */ }
+    }
+    return { ok: true, deleted: toDelete.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -925,13 +964,18 @@ async function touchFile(file) {
     try { await fs.writeFile(file, '', { flag: 'a' }); } catch (e) { /* nada */ }
 }
 
+// Limpia los .tmp huerfanos de `data/` (escrituras cortadas por un crash).
+async function purgeTmpData() {
+    try { return await jsonfile.purgeTmpDir(paths.dataDir()); } catch (e) { return 0; }
+}
+
 module.exports = {
     STALE_PROCESSING_SECONDS,
     nowIso, md5, mbSubstr, normFolder,
     // sesiones
     sessionsRead, sessionsUpdate, findSessionRef, getSession, addSession, updateSession,
     touchSession, sessionRename, sessionHasDefaultName, sessionTitleFromPrompt, deleteSession,
-    sessionImport, sessionTokens, sessionsListFull, sessionBridge, bridgeValidId,
+    sessionImport, sessionTokens, sessionReconcile, sessionsListFull, sessionBridge, bridgeValidId,
     // mensajes
     messagesRead, messagesUpdate, messagesHealStaleStreaming, addMessage, messageAgentOf,
     // catalogo
@@ -949,4 +993,5 @@ module.exports = {
     safeJoinWorkspace, readTextFile, fileTooBig, fmtSize, workspaceList, workspaceListEntries,
     // busqueda / temas / opencode
     searchIndexBuild, themesIndex, themesKnown, ocSessionsList,
+    purgeTmpData,
 };

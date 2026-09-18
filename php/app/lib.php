@@ -514,13 +514,20 @@ function session_has_default_name($sess) {
     return ($name === '' || preg_match('/^Chat \d+$/', $name) === 1);
 }
 
+// Título placeholder que opencode genera solo: no sirve para pisar un nombre
+// útil del hub en un sync forzado.
+function session_name_placeholder($name) {
+    $n = trim((string)$name);
+    return ($n === '' || preg_match('/^Chat \d+$/', $n) === 1 || strpos($n, 'New session - ') === 0);
+}
+
 // ---------------------------------------------------------------------------
 // Historial único: importa (merge idempotente) una sesión de opencode del TUI
 // local. Si ya existe (por opencode_session) solo agrega los mensajes que
 // falten; la clave de dedupe es rol|fecha|resumen de texto.
 // $bridge es el puente que importa (dueño de la sesión).
 // ---------------------------------------------------------------------------
-function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, $messages, $tokens = 0, $cost = 0.0, $bridge = '') {
+function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, $messages, $tokens = 0, $cost = 0.0, $bridge = '', $rename = false) {
     $ocSession = trim((string)$ocSession);
     if ($ocSession === '') {
         return ['ok' => false, 'error' => 'opencode_session requerido'];
@@ -574,7 +581,11 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
         @touch(session_messages_file($id));
     }
     $sid = (int)$sdata['sessions'][$idx]['id'];
-    if (!$created && session_has_default_name($sdata['sessions'][$idx]) && $name !== '') {
+    if (!$created && $rename) {
+        if ($name !== '' && !session_name_placeholder($name)) {
+            $sdata['sessions'][$idx]['name'] = mb_substr($name, 0, 60);
+        }
+    } elseif (!$created && session_has_default_name($sdata['sessions'][$idx]) && $name !== '') {
         $sdata['sessions'][$idx]['name'] = mb_substr($name, 0, 60);
     }
     // El barrido manda la carpeta real del proyecto (info.directory del export);
@@ -961,6 +972,46 @@ function session_tokens($ocSession, $tokens, $cost, $folder = '', $bridge = '') 
         return;
     }
     json_done($fp);
+}
+
+// Normaliza una carpeta para comparar (mismo criterio que el store de Node).
+function reconcile_norm_folder($f) {
+    return rtrim(strtolower(str_replace('/', '\\', (string)$f)), '\\');
+}
+
+// Reconciliación de bajas: el puente informa qué sesiones de opencode ve
+// ($known) y en qué carpetas escaneó ($folders). Se borran en el hub solo las
+// sesiones importadas de ESE puente, cuya carpeta fue escaneada y cuyo
+// opencode_session ya no existe en la PC. Las de carpetas no escaneadas
+// (fuera del workspace) se conservan.
+function session_reconcile($known, $folders, $bridge) {
+    if (!bridge_valid_id($bridge)) return ['ok' => true, 'deleted' => 0];
+    $knownSet = [];
+    foreach ((array)$known as $x) { $knownSet[(string)$x] = true; }
+    $folderSet = [];
+    foreach ((array)$folders as $f) { $folderSet[reconcile_norm_folder($f)] = true; }
+    if (!$folderSet) return ['ok' => true, 'deleted' => 0];
+    $sdata = sessions_read($fp);
+    $keep = [];
+    $del = [];
+    foreach ($sdata['sessions'] as $s) {
+        $oc = isset($s['opencode_session']) ? (string)$s['opencode_session'] : '';
+        $orphan = session_bridge($s) === $bridge
+            && !empty($s['importada'])
+            && $oc !== ''
+            && !isset($knownSet[$oc])
+            && isset($folderSet[reconcile_norm_folder($s['folder'] ?? '')]);
+        if ($orphan) { $del[] = (int)$s['id']; continue; }
+        $keep[] = $s;
+    }
+    if ($del) {
+        $sdata['sessions'] = $keep;
+        sessions_save($sdata, $fp);
+        foreach ($del as $id) { @unlink(session_messages_file($id)); }
+    } else {
+        json_done($fp);
+    }
+    return ['ok' => true, 'deleted' => count($del)];
 }
 
 // Agente con el que se envió el mensaje $userId (para estamparlo en la

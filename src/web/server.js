@@ -6,6 +6,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const auth = require('../auth');
 const routes = require('./routes');
+const store = require('../store');
 const log = require('../log');
 
 const ASSETS = path.join(__dirname, 'assets');
@@ -121,6 +122,8 @@ async function handle(app, req, res) {
 }
 
 function createServer(app) {
+    // Limpieza de .tmp huerfanos de escrituras cortadas (no bloquea el arranque).
+    store.purgeTmpData().then((n) => { if (n) log.warn('[web] .tmp huerfanos borrados: ' + n); }).catch(() => {});
     const server = http.createServer((req, res) => {
         const started = Date.now();
         res.on('finish', () => {

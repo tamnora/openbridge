@@ -9,6 +9,7 @@
  */
 
 const fs = require('node:fs/promises');
+const path = require('node:path');
 
 const locks = new Map();
 
@@ -74,4 +75,17 @@ async function update(file, fallback, fn) {
     });
 }
 
-module.exports = { withLock, readJson, writeAtomic, update };
+// Borra los .tmp que quedaron de una escritura interrumpida (crash/kill). Se
+// llama al arrancar el server: evita que se acumulen cientos de archivos.
+async function purgeTmpDir(dir) {
+    let names = [];
+    try { names = await fs.readdir(dir); } catch (e) { return 0; }
+    let n = 0;
+    for (const name of names) {
+        if (!name.endsWith('.tmp')) continue;
+        try { await fs.unlink(path.join(dir, name)); n++; } catch (e) { /* nada */ }
+    }
+    return n;
+}
+
+module.exports = { withLock, readJson, writeAtomic, update, purgeTmpDir };

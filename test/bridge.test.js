@@ -44,10 +44,11 @@ const MOCK_OC = [
 ].join('\n');
 
 function startMockApi(workspace) {
-    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, proc: null, resolveProc: null, seen: [], workspace };
+    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, proc: null, resolveProc: null, import: null, resolveImport: null, seen: [], workspace };
     const responded = new Promise((resolve) => { state.resolveRespond = resolve; });
     const commanded = new Promise((resolve) => { state.resolveCommand = resolve; });
     const procced = new Promise((resolve) => { state.resolveProc = resolve; });
+    const imported = new Promise((resolve) => { state.resolveImport = resolve; });
     const server = http.createServer((req, res) => {
         let raw = '';
         req.on('data', (c) => { raw += c; });
@@ -76,6 +77,7 @@ function startMockApi(workspace) {
                         commands: [
                             { id: 9, name: 'mcp_list', args: [] },
                             { id: 10, name: 'proc_detect', args: [path.join(workspace, 'proj')] },
+                            { id: 11, name: 'session_sync', args: ['ses_mock1', workspace] },
                         ],
                     };
                 } else {
@@ -90,6 +92,10 @@ function startMockApi(workspace) {
             } else if (action === 'proc_result') {
                 try { state.proc = JSON.parse(raw || '{}'); } catch (e) { state.proc = {}; }
                 if (state.resolveProc) state.resolveProc(state.proc);
+            } else if (action === 'session_import') {
+                try { state.import = JSON.parse(raw || '{}'); } catch (e) { state.import = {}; }
+                if (state.resolveImport) state.resolveImport(state.import);
+                json = { ok: true, session_id: 1, created: true, added: 1 };
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(json));
@@ -102,6 +108,7 @@ function startMockApi(workspace) {
             state.responded = responded;
             state.commanded = commanded;
             state.procced = procced;
+            state.imported = imported;
             resolve(state);
         });
     });
@@ -213,4 +220,25 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     const det = JSON.parse(procDone.text);
     assert.ok(det.suggestions.some((s) => s.cmd === 'npm run dev'), 'detecta npm run dev');
     assert.ok(det.suggestions.some((s) => s.cmd.indexOf('php -S') === 0), 'detecta php -S');
+
+    // session_sync: el comando de la web fuerza el export/import de una sesión.
+    let impTimer = null;
+    const impTimeout = new Promise((_, reject) => {
+        impTimer = setTimeout(() => reject(new Error('timeout esperando "session_import"')), 15000);
+    });
+    let imp;
+    try {
+        imp = await Promise.race([api.imported, impTimeout]);
+    } finally {
+        clearTimeout(impTimer);
+    }
+    assert.equal(imp.opencode_session, 'ses_mock1');
+    assert.equal(imp.rename, true, 'el sync manual propaga el titulo de opencode');
+
+    // Regresión: el finally de tick() debe correr sin ReferenceError. Antes
+    // `liteTimer` se declaraba dentro del try y rompía el cleanup: `busy`
+    // quedaba en true y el barrido de sesiones no volvía a correr.
+    await new Promise((r) => setTimeout(r, 1200));
+    assert.ok(!/liteTimer is not defined/.test(logs), 'no debe romper el finally de tick:\n' + logs);
+    assert.ok(!/barrido de sesiones pausado/.test(logs), 'el barrido no debe quedar pausado por busy');
 });
