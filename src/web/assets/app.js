@@ -73,6 +73,7 @@ var els = {
     rpPreviewPane: document.getElementById('rpPreviewPane'),
     rpPvPort: document.getElementById('rpPvPort'),
     rpPvGo: document.getElementById('rpPvGo'),
+    rpPvOpen: document.getElementById('rpPvOpen'),
     rpPvTun: document.getElementById('rpPvTun'),
     rpPvUrl: document.getElementById('rpPvUrl'),
     rpPvFrame: document.getElementById('rpPvFrame'),
@@ -226,6 +227,8 @@ var procState = {
     portConflict: null, // puerto en uso detectado por EADDRINUSE en el log
     suggestions: [],   // comandos sugeridos por proc_detect (por proyecto)
     suggestFor: '',    // carpeta para la que se detectaron las sugerencias
+    listedOnce: false, // ya se buscaron procesos al entrar (después: manual)
+    forceList: false,  // fuerza un proc_list en el próximo tick (botón reconsultar)
 };
 
 function esc(t) {
@@ -1202,9 +1205,13 @@ function setSbHidden(hidden) {
 function sbWidth() {
     try {
         var w = parseInt(localStorage.getItem('ob_sbW'), 10);
-        if (w >= 200 && w <= 480) return w;
+        if (w >= 140 && w <= 1600) return w;
     } catch (e) {}
     return 264;
+}
+// Ancho máximo generoso para los paneles laterales: deja ~320px de contenido.
+function paneMaxWidth() {
+    return Math.max(320, window.innerWidth - 320);
 }
 function setSbWidth(w) {
     try { localStorage.setItem('ob_sbW', String(w)); } catch (e) {}
@@ -1243,7 +1250,7 @@ if (sbResizer) {
         sbResizer.classList.add('dragging');
         document.body.style.userSelect = 'none';
         var move = function (ev) {
-            setSbWidth(Math.max(200, Math.min(480, ev.clientX)));
+            setSbWidth(Math.max(160, Math.min(paneMaxWidth(), ev.clientX)));
         };
         var up = function () {
             sbResizer.classList.remove('dragging');
@@ -1258,7 +1265,7 @@ if (sbResizer) {
 }
 if (window.innerWidth >= 1024) {
     document.body.classList.toggle('sb-hide', sbHidden());
-    document.documentElement.style.setProperty('--sb-w', sbWidth() + 'px');
+    document.documentElement.style.setProperty('--sb-w', Math.min(sbWidth(), paneMaxWidth()) + 'px');
 }
 
 // ---------------------------------------------------------------------------
@@ -1283,7 +1290,7 @@ function rpSetOpen(open) {
 function rpWidth() {
     try {
         var w = parseInt(localStorage.getItem('ob_rpW'), 10);
-        if (w >= 260 && w <= 720) return w;
+        if (w >= 180 && w <= 1600) return w;
     } catch (e) {}
     return 380;
 }
@@ -1517,6 +1524,11 @@ if (els.rpPvPort) {
     });
 }
 if (els.rpPvTun) els.rpPvTun.addEventListener('click', rpStartTunnel);
+if (els.rpPvOpen) els.rpPvOpen.addEventListener('click', function () {
+    var url = rpPreviewUrl();
+    if (!url) { toast('todavía no hay URL de vista previa', 'error'); return; }
+    window.open(url, '_blank', 'noopener');
+});
 var rpResizer = document.getElementById('rpResizer');
 if (rpResizer) {
     rpResizer.addEventListener('pointerdown', function (e) {
@@ -1526,7 +1538,7 @@ if (rpResizer) {
         rpResizer.classList.add('dragging');
         document.body.style.userSelect = 'none';
         var move = function (ev) {
-            rpSetWidth(Math.max(260, Math.min(720, window.innerWidth - ev.clientX)));
+            rpSetWidth(Math.max(200, Math.min(paneMaxWidth(), window.innerWidth - ev.clientX)));
         };
         var up = function () {
             rpResizer.classList.remove('dragging');
@@ -1541,7 +1553,7 @@ if (rpResizer) {
 }
 if (window.innerWidth >= 1024) {
     try { state.rpanelTab = localStorage.getItem('ob_rpTab') === 'preview' ? 'preview' : 'tree'; } catch (e) {}
-    document.documentElement.style.setProperty('--rp-w', rpWidth() + 'px');
+    document.documentElement.style.setProperty('--rp-w', Math.min(rpWidth(), paneMaxWidth()) + 'px');
     rpTab(state.rpanelTab);
     rpSetOpen(rpStoredOpen());
 }
@@ -4052,6 +4064,8 @@ function procReset() {
     procState.cmd = '';
     procState.detectedPort = '';
     procState.portConflict = null;
+    procState.listedOnce = false;
+    procState.forceList = false;
 }
 
 function stopProcsPollTimer() {
@@ -4081,6 +4095,7 @@ function enterProcsView() {
     }
     procState.open = true;
     if (!procState.input) procState.input = procCmdGet(folder);
+    procState.forceList = true;   // al entrar: buscar una vez los procesos de la app
     renderProcView(folder);
     loadProcSuggestions(folder);
     procPollTick();
@@ -4090,8 +4105,11 @@ function renderProcView(folder) {
     var admin = isAdmin();
     els.viewProcs.innerHTML =
         '<div class="pp-head"><b>procesos</b><span class="pp-sub">' + esc(sessionProcLabel(folder)) + '</span>'
+        + '<div class="pp-actions">'
+        + '<button type="button" class="linkbtn" id="ppRefresh" title="Volver a consultar los procesos de la PC">↻ reconsultar</button>'
+        + (admin ? '<button type="button" class="linkbtn" id="ppStopAll" title="Detener todos los procesos de dev y cerrar los túneles">⏹ detener todo</button>' : '')
         + (state.currentId !== null ? '<button type="button" class="linkbtn pp-back" id="ppBack">← volver al chat</button>' : '')
-        + '</div>'
+        + '</div></div>'
         + '<div class="pp-status" id="procStatus"></div>'
         + '<div id="ppPortWarn"></div>'
         + '<pre id="procLog"><span class="pl-empty">sin salida todavía</span></pre>'
@@ -4107,6 +4125,10 @@ function renderProcView(folder) {
         + (!admin ? '<div class="placeholder">solo un admin puede iniciar procesos o túneles.</div>' : '');
     var back = document.getElementById('ppBack');
     if (back) back.addEventListener('click', function () { showView('chat'); });
+    var refreshBtn = document.getElementById('ppRefresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', refreshProcs);
+    var stopAllBtn = document.getElementById('ppStopAll');
+    if (stopAllBtn) stopAllBtn.addEventListener('click', stopAllProcs);
     var inp = document.getElementById('procCmdInput');
     if (inp) {
         inp.value = procState.input || '';
@@ -4280,10 +4302,11 @@ async function procPollTick() {
         if (!procState.id && !procState.running && procState.exitCode === null) {
             renderProcStatus('consultando…');
         }
-        // proc_list solo cuando falta el proceso o ya terminó (para detectar
-        // reinicios). Si corre, el proc_log ya trae running/done/exitCode:
-        // la mitad de los comandos por ciclo.
-        var needList = !procState.id || !procState.running;
+        // proc_list solo al entrar (o al tocar "reconsultar"). Después, el
+        // proc_log ya trae running/done/exitCode: la mitad de los comandos.
+        var needList = procState.forceList || (!procState.id && !procState.listedOnce);
+        procState.forceList = false;
+        if (needList) procState.listedOnce = true;
         var list = needList ? await ocCommand('proc_list', [], 40, 600) : { ok: true, skipped: true };
         if (myGen !== procGen) return; // el estado cambó mientras volaba: descartar
         var knowNothing = !procState.id && !procState.running && procState.exitCode === null;
@@ -4409,6 +4432,44 @@ async function stopSessionProc() {
     procGen++;
     if (!res.ok) toast(res.error || 'no se pudo detener el proceso', 'error');
     await procPollTick();
+}
+
+// Botón "reconsultar": vuelve a buscar procesos de la app en la PC.
+function refreshProcs() {
+    if (!procState.open) return;
+    procState.forceList = true;
+    procState.listedOnce = false;
+    toast('reconsultando procesos…', 'ok');
+    procPollTick();
+}
+
+// Botón "detener todo": corta todos los dev servers y cierra los túneles.
+async function stopAllProcs() {
+    if (!bridgeOnline()) { toast('el puente está apagado', 'error'); return; }
+    if (!confirm('¿Detener todos los procesos de desarrollo de esta PC y cerrar sus túneles?')) return;
+    var list = await ocCommand('proc_list', [], 40, 600);
+    var ids = [];
+    if (list.ok && list.data && Array.isArray(list.data.procs)) {
+        for (var i = 0; i < list.data.procs.length; i++) {
+            if (list.data.procs[i].running) ids.push(list.data.procs[i].id);
+        }
+    }
+    for (var k = 0; k < ids.length; k++) {
+        await ocCommand('proc_stop', [String(ids[k])], 20, 500);
+    }
+    var tunnels = (state.tunnels || []).slice();
+    for (var t = 0; t < tunnels.length; t++) {
+        await ocCommand('tunnel_stop', [String(tunnels[t].port)], 20, 500);
+    }
+    procReset();
+    procState.listedOnce = true;   // ya consultamos: no re-listar hasta el refresh
+    await refreshTunnels(true);
+    if (procState.open) {
+        renderProcView(sessionProcFolder());
+        procPollTick();
+    }
+    toast('detenido: ' + ids.length + ' proceso(s)'
+        + (tunnels.length ? ' y ' + tunnels.length + ' túnel(es)' : ''), 'ok');
 }
 
 function renderProcTunnels(busyMsg) {
