@@ -47,6 +47,19 @@ function json_done($fp) {
     fclose($fp);
 }
 
+// Marca "hay trabajo nuevo" (send / comandos / carpetas). El long-poll del
+// puente mira el mtime de este archivo para no releer todos los mensajes en
+// cada vuelta: solo hace el escaneo completo cuando el aviso cambio.
+function ob_wake() {
+    @touch(WAKE_FILE);
+}
+
+// ¿Hubo un aviso nuevo desde $since? (barato: un stat).
+function poll_wake_changed($since) {
+    $mt = @filemtime(WAKE_FILE);
+    return $mt !== false && $mt >= (int)$since;
+}
+
 // ---------------------------------------------------------------------------
 // Puentes (computadoras): identidad y registro de estado en vivo.
 //
@@ -149,17 +162,34 @@ function file_lock_modify($path, $defFn, $fn) {
 }
 
 function bridges_modify($fn) {
-    return file_lock_modify(BRIDGES_FILE, 'bridges_default', $fn);
+    $r = file_lock_modify(BRIDGES_FILE, 'bridges_default', $fn);
+    if ($r !== false) bridges_cache_forget();
+    return $r;
+}
+
+// Cache por request del registro de puentes: bridges_summary() y los helpers de
+// estado lo leen muchas veces por request (O(P^2) antes). Se invalida al
+// escribir (bridges_modify y los writers de hub.php).
+function bridges_cache_forget() {
+    $GLOBALS['OB_BRIDGES_CACHE'] = null;
 }
 
 // Mapa id => entrada del registro (sin locks persistentes).
 function bridges_map() {
+    $mt = @filemtime(BRIDGES_FILE);
+    $sz = @filesize(BRIDGES_FILE);
+    if ($mt !== false && is_array($GLOBALS['OB_BRIDGES_CACHE'] ?? null)
+        && $GLOBALS['OB_BRIDGES_CACHE']['mt'] === $mt
+        && $GLOBALS['OB_BRIDGES_CACHE']['sz'] === $sz) {
+        return $GLOBALS['OB_BRIDGES_CACHE']['data'];
+    }
     $data = json_read(BRIDGES_FILE, $fp);
     if ($fp) json_done($fp);
-    if (!is_array($data) || !isset($data['bridges']) || !is_array($data['bridges'])) {
-        return [];
+    $map = (is_array($data) && isset($data['bridges']) && is_array($data['bridges'])) ? $data['bridges'] : [];
+    if ($mt !== false) {
+        $GLOBALS['OB_BRIDGES_CACHE'] = ['mt' => $mt, 'sz' => $sz, 'data' => $map];
     }
-    return $data['bridges'];
+    return $map;
 }
 
 // Upsert de un puente en el registro: heartbeat, sync_catalog, poll.
@@ -240,6 +270,7 @@ function bridges_summary() {
             'owner' => $e['owner'] ?? null,
             'online' => bridge_online_live($id),
             'busy_session' => bridge_busy_session($id),
+            'last_online_ts' => isset($e['last_online_ts']) ? (string)$e['last_online_ts'] : '',
         ];
     }
     usort($out, function ($a, $b) {
@@ -509,11 +540,16 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
     }
     $sdata = sessions_read($fp);
     $idx = -1;
+    $ownedByOther = false;
     foreach ($sdata['sessions'] as $i => $s) {
-        if (!empty($s['opencode_session']) && (string)$s['opencode_session'] === $ocSession) {
-            $idx = $i;
-            break;
-        }
+        if (empty($s['opencode_session']) || (string)$s['opencode_session'] !== $ocSession) continue;
+        $owner = session_bridge($s);
+        if ($owner === '' || $owner === $bridge) { $idx = $i; break; }
+        $ownedByOther = true; // mismo id de opencode pero de otro puente
+    }
+    if ($ownedByOther) {
+        json_done($fp);
+        return ['ok' => false, 'error' => 'Permiso insuficiente'];
     }
     $created = false;
     if ($idx < 0) {
@@ -667,6 +703,30 @@ function delete_session($id) {
     @unlink(session_messages_file($id));
 }
 
+// Cache del resumen de cada sesion (preview/estado) para no releer todos los
+// `messages-*.json` en cada `sessions`/`bootstrap`: el polling de la web cae
+// aca cada pocos segundos. Se guarda en `data/.preview.json` y se invalida por
+// mtime+size del archivo de mensajes (cualquier escritura lo renueva).
+function preview_cache_file() {
+    return DATA_DIR . '/.preview.json';
+}
+function preview_cache_read(&$cache) {
+    if (is_array($GLOBALS['OB_PREVIEW_CACHE'] ?? null)) {
+        $cache = $GLOBALS['OB_PREVIEW_CACHE'];
+        return;
+    }
+    $d = @json_decode((string)@file_get_contents(preview_cache_file()), true);
+    $cache = is_array($d) ? $d : [];
+    $GLOBALS['OB_PREVIEW_CACHE'] = $cache;
+}
+function preview_cache_save($cache) {
+    $GLOBALS['OB_PREVIEW_CACHE'] = $cache;
+    $tmp = preview_cache_file() . '.' . getmypid() . '.tmp';
+    if (@file_put_contents($tmp, json_encode($cache, JSON_UNESCAPED_UNICODE)) !== false) {
+        @rename($tmp, preview_cache_file());
+    }
+}
+
 function sessions_list_full() {
     $data = sessions_read($fp);
     $user = ob_current_user();
@@ -676,59 +736,107 @@ function sessions_list_full() {
     // deriva del dueño de cada una; sin aviso (puente viejo/caído) se infiere
     // de los mensajes, pero solo si su puente late.
     $cutoff = time() - STALE_PROCESSING_SECONDS;
+    preview_cache_read($pcache);
+    $pcacheDirty = false;
+    $seenIds = [];
     $out = [];
     foreach ($data['sessions'] as $sess) {
         $owner = session_bridge($sess);
         if ($visible !== null && !in_array($owner, $visible, true)) continue;
+        $sid = (int)$sess['id'];
+        $seenIds[] = $sid;
         $busyId = bridge_busy_session($owner);
         $bridgeLive = bridge_online_live($owner);
-        $prev = '';
-        $prevRole = '';
-        $prevTs = $sess['last_ts'] ?? $sess['created_ts'];
-        $hasPending = false;
-        $hasProcessing = false;
-        $hasStreaming = false;
-        $mdata = json_read(session_messages_file($sess['id']), $mfp);
-        $mchanged = false;
-        if (is_array($mdata) && !empty($mdata['messages'])) {
-            foreach ($mdata['messages'] as &$msg) {
-                $role = (string)($msg['role'] ?? '');
-                $status = (string)($msg['status'] ?? '');
-                if ($role === 'assistant') {
-                    if ($status === 'streaming') {
-                        // Borrador sin parciales hace demasiado: el puente murió
-                        // a mitad de la respuesta. Se cierra acá mismo para que
-                        // el indicador no quede trabado en "trabajando".
-                        if (strtotime((string)($msg['ts'] ?? '')) < $cutoff) {
-                            $msg['status'] = 'done';
-                            $msg['canceled'] = true;
-                            $mchanged = true;
-                        } else {
-                            $hasStreaming = true;
+        $mfile = session_messages_file($sid);
+        $mt = @filemtime($mfile);
+        $sz = @filesize($mfile);
+        $ce = isset($pcache[$sid]) && is_array($pcache[$sid]) ? $pcache[$sid] : null;
+        $useCache = $ce !== null && $mt !== false
+            && (int)($ce['mt'] ?? -1) === (int)$mt && (int)($ce['sz'] ?? -1) === (int)$sz;
+        // Un borrador 'streaming' viejo hay que curarlo escribiendo el archivo,
+        // asi que en ese caso no sirve la cache.
+        $ceStreamTs = $ce ? (int)($ce['streaming_ts'] ?? 0) : 0;
+        if ($useCache && $ceStreamTs > 0 && $ceStreamTs < $cutoff) $useCache = false;
+        if ($useCache) {
+            $prev = (string)($ce['preview'] ?? '');
+            $prevRole = (string)($ce['preview_role'] ?? '');
+            $prevTs = (string)($ce['last_ts'] ?? ($sess['last_ts'] ?? $sess['created_ts']));
+            $hasPending = !empty($ce['has_pending']);
+            $procTs = (int)($ce['processing_ts'] ?? 0);
+            $hasProcessing = $procTs > 0 && $procTs >= $cutoff;
+            $hasStreaming = $ceStreamTs > 0 && $ceStreamTs >= $cutoff;
+        } else {
+            $prev = '';
+            $prevRole = '';
+            $prevTs = $sess['last_ts'] ?? $sess['created_ts'];
+            $hasPending = false;
+            $hasProcessing = false;
+            $hasStreaming = false;
+            $processingTs = 0;
+            $streamingTs = 0;
+            $mchanged = false;
+            $mdata = json_read($mfile, $mfp);
+            if (is_array($mdata) && !empty($mdata['messages'])) {
+                foreach ($mdata['messages'] as &$msg) {
+                    $role = (string)($msg['role'] ?? '');
+                    $status = (string)($msg['status'] ?? '');
+                    $mts = (int)@strtotime((string)($msg['ts'] ?? ''));
+                    if ($role === 'assistant') {
+                        if ($status === 'streaming') {
+                            // Borrador sin parciales hace demasiado: el puente murió
+                            // a mitad de la respuesta. Se cierra acá mismo para que
+                            // el indicador no quede trabado en "trabajando".
+                            if ($mts < $cutoff) {
+                                $msg['status'] = 'done';
+                                $msg['canceled'] = true;
+                                $mchanged = true;
+                            } else {
+                                $hasStreaming = true;
+                                if ($mts > $streamingTs) $streamingTs = $mts;
+                            }
+                        }
+                    } elseif ($role === 'user') {
+                        if ($status === 'processing') {
+                            // Solo cuenta si es reciente; uno viejo lo reclama o lo
+                            // cancela el poll en cuanto el puente vuelve.
+                            if ($mts >= $cutoff) {
+                                $hasProcessing = true;
+                                if ($mts > $processingTs) $processingTs = $mts;
+                            }
+                        } elseif ($status === 'pending') {
+                            $hasPending = true;
                         }
                     }
-                } elseif ($role === 'user') {
-                    if ($status === 'processing') {
-                        // Solo cuenta si es reciente; uno viejo lo reclama o lo
-                        // cancela el poll en cuanto el puente vuelve.
-                        if (strtotime((string)($msg['ts'] ?? '')) >= $cutoff) $hasProcessing = true;
-                    } elseif ($status === 'pending') {
-                        $hasPending = true;
-                    }
+                    $prev = (string)($msg['text'] ?? '');
+                    $prevRole = $role;
+                    $prevTs = (string)($msg['ts'] ?? $prevTs);
                 }
-                $prev = (string)($msg['text'] ?? '');
-                $prevRole = $role;
-                $prevTs = (string)($msg['ts'] ?? $prevTs);
+                unset($msg);
             }
-            unset($msg);
-            if ($mchanged) {
-                messages_save($mdata, $mfp);
-            } else {
-                json_done($mfp);
+            if ($mfp) {
+                if ($mchanged) messages_save($mdata, $mfp);
+                else json_done($mfp);
+            }
+            clearstatcache(true, $mfile);
+            $nmt = @filemtime($mfile);
+            $nsz = @filesize($mfile);
+            $newCe = [
+                'mt' => $nmt === false ? -1 : (int)$nmt,
+                'sz' => $nsz === false ? -1 : (int)$nsz,
+                'preview' => $prev,
+                'preview_role' => $prevRole,
+                'last_ts' => (string)$prevTs,
+                'has_pending' => $hasPending,
+                'processing_ts' => $processingTs,
+                'streaming_ts' => $streamingTs,
+            ];
+            if ($ce !== $newCe) {
+                $pcache[$sid] = $newCe;
+                $pcacheDirty = true;
             }
         }
         if ($busyId !== null) {
-            $state = (int)$sess['id'] === $busyId ? 'working' : (($hasPending || $hasProcessing) ? 'waiting' : '');
+            $state = $sid === $busyId ? 'working' : (($hasPending || $hasProcessing) ? 'waiting' : '');
         } else {
             // Sin aviso del puente (versión vieja): se infiere de los mensajes,
             // pero solo si el puente late; caído, nada puede estar corriendo.
@@ -741,6 +849,15 @@ function sessions_list_full() {
         $out[] = $sess;
     }
     json_done($fp);
+    // Poda de sesiones borradas (solo el admin ve todas; un usuario no debe
+    // tirar entradas de sesiones que no ve).
+    if ($visible === null && $pcache) {
+        $flip = array_flip($seenIds);
+        foreach (array_keys($pcache) as $k) {
+            if (!isset($flip[$k])) { unset($pcache[$k]); $pcacheDirty = true; }
+        }
+    }
+    if ($pcacheDirty) preview_cache_save($pcache);
     // Más reciente primero.
     usort($out, function ($a, $b) {
         return strcmp((string)($b['last_ts'] ?? ''), (string)($a['last_ts'] ?? ''));
@@ -803,6 +920,7 @@ function add_message($sid, $role, $text, $status = 'pending', $extra = []) {
     $data['messages'][] = $msg;
     messages_save($data, $fp);
     touch_session($sid);
+    ob_wake();
     return $id;
 }
 
@@ -828,18 +946,19 @@ function session_tokens($ocSession, $tokens, $cost, $folder = '', $bridge = '') 
     }
     $sdata = sessions_read($fp);
     foreach ($sdata['sessions'] as $i => $s) {
-        if (!empty($s['opencode_session']) && (string)$s['opencode_session'] === $ocSession) {
-            if ($tokens > 0) $sdata['sessions'][$i]['tokens'] = $tokens;
-            if ($cost > 0) $sdata['sessions'][$i]['cost'] = round($cost, 4);
-            if ($folder !== '' && (string)($s['folder'] ?? '') !== $folder) {
-                $sdata['sessions'][$i]['folder'] = $folder;
-            }
-            if (bridge_valid_id($bridge) && session_bridge($sdata['sessions'][$i]) === '') {
-                $sdata['sessions'][$i]['bridge'] = $bridge;
-            }
-            sessions_save($sdata, $fp);
-            return;
+        if (empty($s['opencode_session']) || (string)$s['opencode_session'] !== $ocSession) continue;
+        $owner = session_bridge($s);
+        if ($owner !== '' && $owner !== $bridge) continue; // es de otro puente: no tocar
+        if ($tokens > 0) $sdata['sessions'][$i]['tokens'] = $tokens;
+        if ($cost > 0) $sdata['sessions'][$i]['cost'] = round($cost, 4);
+        if ($folder !== '' && (string)($s['folder'] ?? '') !== $folder) {
+            $sdata['sessions'][$i]['folder'] = $folder;
         }
+        if (bridge_valid_id($bridge) && session_bridge($sdata['sessions'][$i]) === '') {
+            $sdata['sessions'][$i]['bridge'] = $bridge;
+        }
+        sessions_save($sdata, $fp);
+        return;
     }
     json_done($fp);
 }
@@ -936,6 +1055,33 @@ function catalog_version($cat = null) {
     return md5(json_encode($sig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
+// Version del catalogo con cache en disco (mtime+size): permite responder
+// changed:false sin leer ni re-encodear el catalogo entero en cada poll. El
+// archivo lateral `.ver` se reescribe solo cuando cambia mtime o tamano.
+function catalog_version_cached($file = CATALOG_FILE) {
+    $mt = @filemtime($file);
+    $sz = @filesize($file);
+    if ($mt === false || $sz === false) {
+        return catalog_version(catalog_read($file));
+    }
+    $cf = $file . '.ver';
+    // Solo se confia en la cache si el archivo lleva >2 s sin tocarse: evita el
+    // caso raro de dos escrituras en el mismo segundo con igual tamano.
+    if ((time() - (int)$mt) > 2) {
+        $raw = @file_get_contents($cf);
+        if ($raw !== false) {
+            $c = json_decode($raw, true);
+            if (is_array($c) && (int)($c['mt'] ?? -1) === (int)$mt
+                && (int)($c['sz'] ?? -1) === (int)$sz && isset($c['v'])) {
+                return (string)$c['v'];
+            }
+        }
+    }
+    $ver = catalog_version(catalog_read($file));
+    @file_put_contents($cf, json_encode(['mt' => (int)$mt, 'sz' => (int)$sz, 'v' => $ver]));
+    return $ver;
+}
+
 // Heartbeat del puente: marca que el servicio local está vivo (lo llama el
 // puente cada ~15 s). Hoy el estado en vivo vive en el registro de puentes
 // (bridges.json); estas dos funciones legacy operan sobre el catálogo '' para
@@ -983,17 +1129,39 @@ function catalog_set_busy($sid) {
     });
 }
 
+// Cache por request: el catalogo se lee muchas veces en un mismo request
+// (bridge_can_claim_session por sesion sin dueno, catalog_version, overlays).
+// Se invalida en cada escritura (catalog_write/catalog_modify) y tambien por
+// mtime+size, asi dos procesos no se pisan.
+function catalog_cache_forget($file = null) {
+    if (!isset($GLOBALS['OB_CAT_CACHE']) || !is_array($GLOBALS['OB_CAT_CACHE'])) {
+        $GLOBALS['OB_CAT_CACHE'] = [];
+    }
+    if ($file === null) { $GLOBALS['OB_CAT_CACHE'] = []; return; }
+    unset($GLOBALS['OB_CAT_CACHE'][$file]);
+}
+
 function catalog_read($file = CATALOG_FILE) {
+    $mt = @filemtime($file);
+    $sz = @filesize($file);
+    if ($mt !== false && isset($GLOBALS['OB_CAT_CACHE'][$file])
+        && $GLOBALS['OB_CAT_CACHE'][$file]['mt'] === $mt
+        && $GLOBALS['OB_CAT_CACHE'][$file]['sz'] === $sz) {
+        return $GLOBALS['OB_CAT_CACHE'][$file]['data'];
+    }
     $data = json_read($file, $fp);
     json_done($fp);
     if (!is_array($data)) {
-        return catalog_default();
+        $data = [];
     }
     $def = catalog_default();
     foreach ($def as $k => $v) {
         if (!isset($data[$k])) {
             $data[$k] = $v;
         }
+    }
+    if ($mt !== false) {
+        $GLOBALS['OB_CAT_CACHE'][$file] = ['mt' => $mt, 'sz' => $sz, 'data' => $data];
     }
     return $data;
 }
@@ -1010,6 +1178,7 @@ function catalog_write($catalog, $file = CATALOG_FILE) {
     fflush($fp);
     flock($fp, LOCK_UN);
     fclose($fp);
+    catalog_cache_forget($file);
     return true;
 }
 
@@ -1024,7 +1193,9 @@ function catalog_write($catalog, $file = CATALOG_FILE) {
 // lectores nunca vean un archivo cortado. $fn(&$cat) modifica el array;
 // devolver false aborta sin escribir.
 function catalog_modify($fn, $file = CATALOG_FILE) {
-    return file_lock_modify($file, 'catalog_default', $fn);
+    $r = file_lock_modify($file, 'catalog_default', $fn);
+    if ($r !== false) catalog_cache_forget($file);
+    return $r;
 }
 
 // $modelsFull: catálogo completo agrupado por proveedor
@@ -1075,6 +1246,7 @@ function catalog_add_request($name, $file = CATALOG_FILE) {
             'ts' => gmdate('c'),
         ];
     }, $file);
+    if ($id > 0) ob_wake();
     return $id;
 }
 
@@ -1415,7 +1587,8 @@ function push_read(&$fp = null) {
     return $data;
 }
 
-function push_store($endpoint, $p256dh, $auth, $ua = '') {
+// $owner: id del usuario dueno de la suscripcion (para no avisar a otros).
+function push_store($endpoint, $p256dh, $auth, $ua = '', $owner = '') {
     $data = push_read($fp);
     $found = false;
     foreach ($data['subscriptions'] as &$sub) {
@@ -1423,6 +1596,7 @@ function push_store($endpoint, $p256dh, $auth, $ua = '') {
             $sub['p256dh'] = $p256dh;
             $sub['auth'] = $auth;
             $sub['ua'] = $ua;
+            if ($owner !== '') $sub['owner'] = $owner;
             $sub['ts'] = gmdate('c');
             $found = true;
             break;
@@ -1435,27 +1609,36 @@ function push_store($endpoint, $p256dh, $auth, $ua = '') {
             'p256dh' => $p256dh,
             'auth' => $auth,
             'ua' => $ua,
+            'owner' => $owner,
             'ts' => gmdate('c'),
         ];
     }
     json_save($data, $fp);
 }
 
-function push_remove($endpoint) {
+// Con $owner no nulo solo borra la suscripcion de ese usuario (o una legacy
+// sin dueno); un usuario no puede desuscribir el dispositivo de otro.
+function push_remove($endpoint, $owner = null) {
     $data = push_read($fp);
     $kept = [];
     foreach ($data['subscriptions'] as $sub) {
-        if ($sub['endpoint'] !== $endpoint) {
-            $kept[] = $sub;
+        if ($sub['endpoint'] === $endpoint) {
+            if ($owner !== null && ($sub['owner'] ?? '') !== '' && ($sub['owner'] ?? '') !== $owner) {
+                $kept[] = $sub; // no es suya: se conserva
+                continue;
+            }
+            continue; // se borra
         }
+        $kept[] = $sub;
     }
     $data['subscriptions'] = $kept;
     json_save($data, $fp);
 }
 
-// Envia el aviso a todas las suscripciones guardadas. Devuelve cuantas se
-// pudieron notificar. Elimina las suscripciones caidas (404/410).
-function push_send($title, $body, $clickPath = 'chat.php') {
+// Envia el aviso a las suscripciones guardadas. Con $bridge solo avisa a los
+// duenos que pueden ver ese puente (evita fugas entre usuarios). Devuelve
+// cuantas se pudieron notificar. Elimina las suscripciones caidas (404/410).
+function push_send($title, $body, $clickPath = 'chat.php', $bridge = null) {
     if (!push_enabled()) {
         return 0;
     }
@@ -1483,7 +1666,22 @@ function push_send($title, $body, $clickPath = 'chat.php') {
     $data = push_read($fp);
     $sent = 0;
     $dead = [];
+    $processed = 0;
+    $maxSubs = 20; // tope: no bloquear la respuesta por cientos de dispositivos
+    $userCache = [];
     foreach ($data['subscriptions'] as $sub) {
+        if ($processed >= $maxSubs) break;
+        // Filtro por dueno: solo los usuarios que pueden ver el puente de la
+        // sesion reciben el aviso (admin incluido).
+        if ($bridge !== null) {
+            $owner = isset($sub['owner']) ? (string)$sub['owner'] : '';
+            if ($owner === '' || !function_exists('ob_user_by_id') || !function_exists('ob_bridge_visible')) {
+                continue;
+            }
+            if (!isset($userCache[$owner])) $userCache[$owner] = ob_user_by_id($owner);
+            $u = $userCache[$owner];
+            if (!$u || !ob_bridge_visible($bridge, $u)) continue;
+        }
         $endpoint = isset($sub['endpoint']) ? (string)$sub['endpoint'] : '';
         $uaPoint = b64url_decode((string)($sub['p256dh'] ?? ''));
         $auth = b64url_decode((string)($sub['auth'] ?? ''));
@@ -1501,6 +1699,7 @@ function push_send($title, $body, $clickPath = 'chat.php') {
         if ($authz === '') {
             continue;
         }
+        $processed++;
         $code = push_http_post($endpoint, [
             'Content-Type: application/octet-stream',
             'Content-Encoding: aes128gcm',
@@ -1527,6 +1726,25 @@ function push_send($title, $body, $clickPath = 'chat.php') {
         json_done($fp);
     }
     return $sent;
+}
+
+// Envia el push despues de responder: con PHP-FPM se libera la conexion al
+// cliente con fastcgi_finish_request() y recien ahi se hace la red; sin FPM
+// (php -S) queda sincrono, pero el cliente ya no espera la respuesta.
+function push_send_later($title, $body, $clickPath = 'chat.php', $bridge = null) {
+    if (!push_enabled()) return;
+    register_shutdown_function(function () use ($title, $body, $clickPath, $bridge) {
+        if (function_exists('fastcgi_finish_request')) {
+            @fastcgi_finish_request();
+        }
+        @ignore_user_abort(true);
+        @set_time_limit(20);
+        try {
+            push_send($title, $body, $clickPath, $bridge);
+        } catch (Throwable $e) {
+            // el push nunca debe romper el cierre del request
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1690,6 +1908,7 @@ function enqueue_command($name, $args = [], $file = CATALOG_FILE) {
         ];
         $cat = prune_commands($cat);
     }, $file);
+    if ($id > 0) ob_wake();
     return $id;
 }
 
@@ -1715,18 +1934,39 @@ function claim_commands($file = CATALOG_FILE) {
 // Acota el historial de la cola de comandos: deja como mucho `$keep` entradas
 // terminadas (done/error), conservando las MÁS NUEVAS (el array está en orden
 // de inserción, así que se recortan del principio). Nunca toca pending ni
-// processing (un cliente puede estar consultando su resultado). Así los logs
-// de procesos no inflan catalog.json sin límite.
-function prune_commands($cat, $keep = 60) {
+// processing (un cliente puede estar consultando su resultado). Además corta
+// por BYTES: un `fs_read`/`proc_log` grande puede pesar cientos de KB y 60 de
+// ellos inflaban catalog.json a decenas de MB (y el SSE lo releía entero).
+function prune_commands($cat, $keep = 60, $maxBytes = 2097152) {
     if (!isset($cat['commands']) || !is_array($cat['commands'])) return $cat;
     $finishedIdx = [];
+    $bytes = 0;
     foreach ($cat['commands'] as $i => $c) {
         $st = isset($c['status']) ? $c['status'] : '';
-        if ($st === 'done' || $st === 'error') $finishedIdx[] = $i;
+        if ($st === 'done' || $st === 'error') {
+            $finishedIdx[] = $i;
+            $bytes += strlen((string)($c['result'] ?? '')) + strlen((string)($c['error'] ?? ''));
+        }
     }
+    $drop = [];
+    // 1) Por cantidad: deja los `$keep` terminados mas nuevos.
     $excess = count($finishedIdx) - $keep;
-    if ($excess <= 0) return $cat;
-    $drop = array_slice($finishedIdx, 0, $excess); // los más viejos primero
+    if ($excess > 0) $drop = array_slice($finishedIdx, 0, $excess);
+    // 2) Por bytes: sigue descartando los mas viejos hasta entrar en el tope
+    // (sin bajar del minimo de 5, por conveniencia de la UI).
+    if ($bytes > $maxBytes) {
+        $minKeep = 5;
+        $remaining = count($finishedIdx) - count($drop);
+        foreach ($finishedIdx as $i) {
+            if ($bytes <= $maxBytes || $remaining <= $minKeep) break;
+            if (in_array($i, $drop, true)) continue;
+            $c = $cat['commands'][$i];
+            $bytes -= strlen((string)($c['result'] ?? '')) + strlen((string)($c['error'] ?? ''));
+            $drop[] = $i;
+            $remaining--;
+        }
+    }
+    if (!$drop) return $cat;
     foreach ($drop as $i) unset($cat['commands'][$i]);
     $cat['commands'] = array_values($cat['commands']);
     return $cat;
@@ -1789,6 +2029,65 @@ function finish_command($id, $ok, $text, $error = '', $file = CATALOG_FILE) {
         if ($found) $cat = prune_commands($cat);
     }, $file);
     return $found;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostico: resumen de uso de `data/` (tamanos, contadores y bytes de la
+// cola de comandos). Lo usa `?action=diag` (solo admin).
+// ---------------------------------------------------------------------------
+function ob_data_stats() {
+    $out = [
+        'total_bytes' => 0,
+        'files' => [],
+        'messages' => ['count' => 0, 'bytes' => 0],
+        'sessions' => 0,
+        'bridges' => 0,
+        'subscriptions' => 0,
+        'command_bytes' => 0,
+    ];
+    $entries = @scandir(DATA_DIR);
+    if (!is_array($entries)) return $out;
+    foreach ($entries as $f) {
+        if ($f === '.' || $f === '..') continue;
+        $path = DATA_DIR . '/' . $f;
+        if (!is_file($path)) continue;
+        $sz = (int)@filesize($path);
+        $out['total_bytes'] += $sz;
+        if (preg_match('/^messages-(\d+)\.json$/', $f)) {
+            $out['messages']['count']++;
+            $out['messages']['bytes'] += $sz;
+            continue;
+        }
+        if (preg_match('/^catalog.*\.json$/', $f)) {
+            $out['files'][$f] = $sz;
+            $cat = @json_decode((string)@file_get_contents($path), true);
+            if (is_array($cat) && isset($cat['commands']) && is_array($cat['commands'])) {
+                foreach ($cat['commands'] as $c) {
+                    $out['command_bytes'] += strlen((string)($c['result'] ?? '')) + strlen((string)($c['error'] ?? ''));
+                }
+            }
+            continue;
+        }
+        if ($f === 'sessions.json') {
+            $sd = @json_decode((string)@file_get_contents($path), true);
+            if (is_array($sd) && isset($sd['sessions']) && is_array($sd['sessions'])) {
+                $out['sessions'] = count($sd['sessions']);
+            }
+        } elseif ($f === 'bridges.json') {
+            $bd = @json_decode((string)@file_get_contents($path), true);
+            if (is_array($bd) && isset($bd['bridges']) && is_array($bd['bridges'])) {
+                $out['bridges'] = count($bd['bridges']);
+            }
+        } elseif ($f === 'push.json') {
+            $pd = @json_decode((string)@file_get_contents($path), true);
+            if (is_array($pd) && isset($pd['subscriptions']) && is_array($pd['subscriptions'])) {
+                $out['subscriptions'] = count($pd['subscriptions']);
+            }
+        }
+        $out['files'][$f] = $sz;
+    }
+    arsort($out['files']);
+    return $out;
 }
 
 // Lista de sesiones de opencode parseada del output crudo del puente.

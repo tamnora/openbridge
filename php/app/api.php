@@ -6,9 +6,49 @@ ob_security_headers();
 
 $action = $_GET['action'] ?? '';
 
+// Diagnostico: registra en data/.diag.log los requests lentos (duracion +
+// memoria pico) para poder medir el consumo real del hosting. Se activa con
+// app.json.diag=true o OPENBRIDGE_DIAG=1.
+if (OB_DIAG) {
+    $__ob_t0 = microtime(true);
+    register_shutdown_function(function () use ($__ob_t0) {
+        $ms = (int)round((microtime(true) - $__ob_t0) * 1000);
+        if ($ms < DIAG_SLOW_MS) return;
+        $line = gmdate('c') . ' action=' . preg_replace('/[^a-z_]/', '', strtolower((string)($_GET['action'] ?? '')))
+            . ' ms=' . $ms
+            . ' peak=' . memory_get_peak_usage(true)
+            . ' ip=' . ($_SERVER['REMOTE_ADDR'] ?? '')
+            . "\n";
+        @file_put_contents(DIAG_LOG, $line, FILE_APPEND | LOCK_EX);
+        clearstatcache(true, DIAG_LOG);
+        if (@filesize(DIAG_LOG) > 262144) {
+            $all = @file(DIAG_LOG, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            if (is_array($all) && count($all) > 200) {
+                @file_put_contents(DIAG_LOG, implode("\n", array_slice($all, -200)) . "\n", LOCK_EX);
+            }
+        }
+    });
+}
+
 // Comprobación de salud (puede usarla el puente).
 if ($action === 'ping') {
     json_response(['ok' => true, 'now' => gmdate('c')]);
+}
+
+// Diagnostico de consumo (solo admin): memoria del request, extensiones y
+// resumen de `data/`. Sirve para saber cuanto ocupa/consume el hub.
+if ($action === 'diag') {
+    require_role(['admin']);
+    $stats = ob_data_stats();
+    json_response([
+        'ok' => true,
+        'php' => PHP_VERSION,
+        'sodium' => function_exists('sodium_crypto_pwhash_scryptsalsa208sha256_ll'),
+        'memory_bytes' => memory_get_usage(true),
+        'memory_peak_bytes' => memory_get_peak_usage(true),
+        'diag_log_bytes' => (int)@filesize(DIAG_LOG),
+        'data' => $stats,
+    ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -16,17 +56,33 @@ if ($action === 'ping') {
 // El catálogo es POR PUENTE: la web elige la PC (?bridge=<id>) y recibe sus
 // carpetas/modelos/workspace. Con ?v=<versión> responde liviano si no cambió.
 // ---------------------------------------------------------------------------
+// Ultimo latido de un puente dentro del resumen ya leido (evita otra lectura
+// de bridges.json en el camino "no cambio").
+function bridges_summary_online_ts($live, $bridge) {
+    foreach ((array)$live as $b) {
+        if ((string)($b['id'] ?? '') === (string)$bridge) {
+            return (string)($b['last_online_ts'] ?? '');
+        }
+    }
+    return '';
+}
+
 if ($action === 'catalog') {
     require_login_readonly();
     $bridge = resolve_web_bridge();
     $file = bridge_catalog_file($bridge);
-    $cat = catalog_read($file);
-    $ver = catalog_version($cat);
     $v = isset($_GET['v']) ? (string)$_GET['v'] : '';
     $live = bridges_summary();
-    if ($v !== '' && hash_equals($ver, $v)) {
-        json_response(['ok' => true, 'changed' => false, 'cat_ver' => $ver, 'bridge' => $bridge, 'bridges' => $live, 'online_ts' => bridge_live_overlay($cat, $bridge)['last_online_ts'] ?? '']);
+    // Camino liviano: si la version coincide, responde sin leer ni re-encodear
+    // el catalogo (clave para el polling cada pocos segundos).
+    if ($v !== '') {
+        $ver = catalog_version_cached($file);
+        if (hash_equals($ver, $v)) {
+            json_response(['ok' => true, 'changed' => false, 'cat_ver' => $ver, 'bridge' => $bridge, 'bridges' => $live, 'online_ts' => bridges_summary_online_ts($live, $bridge)]);
+        }
     }
+    $cat = catalog_read($file);
+    $ver = catalog_version($cat);
     $outCat = bridge_live_overlay($cat, $bridge);
     json_response(['ok' => true, 'changed' => true, 'catalog' => $outCat, 'cat_ver' => $ver, 'bridge' => $bridge, 'bridges' => $live, 'online_ts' => $outCat['last_online_ts'] ?? '']);
 }
@@ -37,24 +93,26 @@ if ($action === 'bootstrap') {
     require_login_readonly();
     $bridge = resolve_web_bridge();
     $file = bridge_catalog_file($bridge);
-    $cat = catalog_read($file);
-    $ver = catalog_version($cat);
     $v = isset($_GET['v']) ? (string)$_GET['v'] : '';
+    $live = bridges_summary();
+    $ver = catalog_version_cached($file);
     $changed = !($v !== '' && hash_equals($ver, $v));
     $out = [
         'ok' => true,
         'changed' => $changed,
         'cat_ver' => $ver,
         'bridge' => $bridge,
-        'bridges' => bridges_summary(),
+        'bridges' => $live,
         'sessions' => sessions_list_full(),
         'features' => ['pairing' => true],
     ];
     if ($changed) {
+        // Solo aca se lee el catalogo completo.
+        $cat = catalog_read($file);
         $out['catalog'] = bridge_live_overlay($cat, $bridge);
         $out['online_ts'] = $out['catalog']['last_online_ts'] ?? '';
     } else {
-        $out['online_ts'] = bridge_live_overlay($cat, $bridge)['last_online_ts'] ?? '';
+        $out['online_ts'] = bridges_summary_online_ts($live, $bridge);
     }
     json_response($out);
 }
@@ -270,6 +328,13 @@ if ($action === 'cancel_status') {
     $sid = (int)($body['session_id'] ?? 0);
     if ($sid <= 0) {
         json_response(['ok' => false, 'error' => 'session_id requerido'], 400);
+    }
+    $sess = get_session($sid);
+    if ($sess === null) {
+        json_response(['ok' => false, 'error' => 'Sesion no encontrada'], 404);
+    }
+    if (!bridge_can_claim_session(resolve_request_bridge(), $sess)) {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
     }
     $data = messages_read($sid, $mfp);
     json_done($mfp);
@@ -509,8 +574,7 @@ if ($action === 'request_folder') {
 // sus llaves y lo usa al responder para avisarle al dispositivo.
 // ---------------------------------------------------------------------------
 if ($action === 'push_subscribe') {
-    require_login();
-    require_csrf();
+    $u = require_csrf();
     $body = json_decode(file_get_contents('php://input'), true);
     if (!is_array($body)) {
         $body = $_POST;
@@ -533,20 +597,19 @@ if ($action === 'push_subscribe') {
     if (strlen((string)b64url_decode($p256dh)) !== 65 || strlen((string)b64url_decode($auth)) !== 16) {
         json_response(['ok' => false, 'error' => 'Llaves de la suscripción no válidas'], 400);
     }
-    push_store($endpoint, $p256dh, $auth, $ua);
+    push_store($endpoint, $p256dh, $auth, $ua, (string)$u['id']);
     json_response(['ok' => true]);
 }
 
 if ($action === 'push_unsubscribe') {
-    require_login();
-    require_csrf();
+    $u = require_csrf();
     $body = json_decode(file_get_contents('php://input'), true);
     if (!is_array($body)) {
         $body = $_POST;
     }
     $endpoint = trim((string)($body['endpoint'] ?? ''));
     if ($endpoint !== '') {
-        push_remove($endpoint);
+        push_remove($endpoint, (string)$u['id']);
     }
     json_response(['ok' => true]);
 }
@@ -578,7 +641,21 @@ if ($action === 'poll') {
     // id) y de las legacy sin dueño cuya carpeta tiene en su catálogo.
     $bridge = resolve_request_bridge();
     $file = bridge_catalog_file($bridge);
-    bridge_registry_upsert($bridge, request_bridge_name());
+    // El estado "online" lo mantiene el heartbeat cada 15 s; no hace falta
+    // reescribir bridges.json en cada poll (era 1 write cada ~5 s).
+    // Vista previa del catalogo: solo se reescribe si hay comandos/carpetas
+    // pendientes (antes se hacia un write por poll aunque no hubiera nada).
+    $catPeek = catalog_read($file);
+    $hasPendingCmd = false;
+    foreach ((array)($catPeek['commands'] ?? []) as $c) {
+        if (($c['status'] ?? '') === 'pending') { $hasPendingCmd = true; break; }
+    }
+    $hasPendingReq = false;
+    if (!empty($catPeek['allow_create_folders'])) {
+        foreach ((array)($catPeek['requests'] ?? []) as $r) {
+            if (($r['status'] ?? '') === 'pending') { $hasPendingReq = true; break; }
+        }
+    }
     $cutoff = time() - STALE_PROCESSING_SECONDS;
     // Modo liviano (lo pide el puente mientras tiene un mensaje procesándose):
     // solo reclama comandos; mensajes y carpetas quedan para el poll normal,
@@ -611,18 +688,27 @@ if ($action === 'poll') {
     if (!$lite && ((is_array($body) && !empty($body['wait'])) || isset($_GET['wait']))) {
         @set_time_limit(30);
         $started = time();
-        while (!poll_peek_work($cutoff, $bridge)) {
+        // Un escaneo completo al entrar (puede haber trabajo encolado antes de
+        // la espera). Despues, durante la espera, solo se vuelve a escanear si
+        // ob_wake() aviso algo nuevo: evita releer todos los messages-*.json
+        // cada 500 ms.
+        $hasWork = poll_peek_work($cutoff, $bridge);
+        while (!$hasWork) {
             echo ' ';
             @flush();
             if (connection_aborted()) exit;
             if ((time() - $started) >= $waitMax) break;
             usleep(500000);
+            if (poll_wake_changed($started)) {
+                $hasWork = poll_peek_work($cutoff, $bridge);
+            }
         }
         if (connection_aborted()) exit;
     }
     $sdata = sessions_read($sfp);
     $claimed = [];
     $knownOc = [];
+    $sessChanged = false;
     if (!$lite) {
         foreach ($sdata['sessions'] as &$sess) {
             $sid = (int)$sess['id'];
@@ -656,6 +742,7 @@ if ($action === 'poll') {
                     // (tiene la carpeta): queda asignada a él.
                     if ($bridge !== '' && session_bridge($sess) === '') {
                         $sess['bridge'] = $bridge;
+                        $sessChanged = true;
                     }
                     $claimed[] = [
                         'session_id' => $sid,
@@ -681,7 +768,8 @@ if ($action === 'poll') {
             }
         }
         unset($sess);
-        sessions_save($sdata, $sfp);
+        if ($sessChanged) sessions_save($sdata, $sfp);
+        else json_done($sfp);
         // Chats web creados acá y ya vinculados a opencode: el puente los salta
         // al barrer (no duplicar). Solo cuenta los de este puente (dueño = su
         // id) y los legacy sin dueño; los espejos importados de OTRO puente no.
@@ -694,12 +782,12 @@ if ($action === 'poll') {
                 $knownOc[] = (string)$s['opencode_session'];
             }
         }
-        $foldersToCreate = catalog_claim_requests($file);
+        $foldersToCreate = $hasPendingReq ? catalog_claim_requests($file) : [];
     } else {
         json_done($sfp);
         $foldersToCreate = [];
     }
-    $commands = claim_commands($file);
+    $commands = $hasPendingCmd ? claim_commands($file) : [];
     json_response(['ok' => true, 'messages' => $claimed, 'folders' => $foldersToCreate, 'commands' => $commands, 'known_oc' => $knownOc]);
 }
 
@@ -807,6 +895,15 @@ if ($action === 'respond_partial') {
     if ($sid <= 0 || $userId <= 0) {
         json_response(['ok' => false, 'error' => 'session_id y user_id son obligatorios'], 400);
     }
+    // Aislamiento entre inquilinos: el puente solo puede publicar parciales de
+    // sesiones que le pertenecen (o legacy sin dueno de su catalogo).
+    $sess = get_session($sid);
+    if ($sess === null) {
+        json_response(['ok' => false, 'error' => 'Sesion no encontrada'], 404);
+    }
+    if (!bridge_can_claim_session(resolve_request_bridge(), $sess)) {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
+    }
     if (mb_strlen($text) > 50000 || mb_strlen($reasoning) > 50000) {
         json_response(['ok' => false, 'error' => 'Respuesta demasiado larga'], 400);
     }
@@ -874,6 +971,13 @@ if ($action === 'respond') {
     if ($sidIdx < 0) {
         json_done($sfp);
         json_response(['ok' => false, 'error' => 'Sesión no encontrada'], 404);
+    }
+    // Aislamiento entre inquilinos: el token del puente solo puede responder
+    // mensajes de sus propias sesiones (o legacy sin dueno de su catalogo).
+    $reqBridge = resolve_request_bridge();
+    if (!bridge_can_claim_session($reqBridge, $sdata['sessions'][$sidIdx])) {
+        json_done($sfp);
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
     }
     $oc = isset($body['opencode_session']) ? trim((string)$body['opencode_session']) : '';
     $reasoning = trim((string)($body['reasoning'] ?? ''));
@@ -963,7 +1067,7 @@ if ($action === 'respond') {
         $data['messages'][] = $newMsg;
     }
     messages_save($data, $mfp);
-    push_send(($canceled ? '⏹ ' : '') . 'IA respondió · ' . ($sdata['sessions'][$sidIdx]['name'] ?? 'chat'), mb_substr($text, 0, 200) . (mb_strlen($text) > 200 ? '.' : ''), 'chat.php?session=' . $sid);
+    push_send_later(($canceled ? '⏹ ' : '') . 'IA respondió · ' . ($sdata['sessions'][$sidIdx]['name'] ?? 'chat'), mb_substr($text, 0, 200) . (mb_strlen($text) > 200 ? '.' : ''), 'chat.php?session=' . $sid, session_bridge($sdata['sessions'][$sidIdx]));
     json_response(['ok' => true, 'id' => $aid]);
 }
 
@@ -1270,7 +1374,8 @@ if ($action === 'stream') {
     @set_time_limit(30);
     $started = time();
     $maxRuntime = 25; // cortamos la conexión antes del timeout de PHP
-    $lastRegRaw = '';
+    $loopMs = 1000;   // 1 s por vuelta (antes 500 ms): la mitad de lecturas
+    $lastRegSig = '';
     $lastBusySig = '';
     $lastCatSigs = [];
     $lastSessionsSig = '';
@@ -1282,6 +1387,13 @@ if ($action === 'stream') {
         echo 'event: ' . $event . "\n";
         echo 'data: ' . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
         @flush();
+    };
+    // Firma barata (mtime+size): evita leer el archivo entero en cada vuelta.
+    $sigOf = function ($path) {
+        $mt = @filemtime($path);
+        if ($mt === false) return '';
+        $sz = @filesize($path);
+        return $mt . ':' . ($sz === false ? 0 : $sz);
     };
     $send('hello', ['now' => gmdate('c')]);
     while (true) {
@@ -1295,11 +1407,11 @@ if ($action === 'stream') {
         // en ejecución. Evento liviano 'online' con el resumen de puentes para
         // que la web pinte el selector; si cambia quién está "trabajando", se
         // avisa además con sessions_changed (las listas recalculan estados).
-        $regRaw = (string)@file_get_contents(BRIDGES_FILE);
-        if ($regRaw !== $lastRegRaw) {
-            $lastRegRaw = $regRaw;
-            $reg = @json_decode($regRaw, true);
-            if (is_array($reg) && !empty($reg['bridges'])) {
+        // Solo se parsea/lee si la firma (mtime+size) cambio.
+        $regSig = $sigOf(BRIDGES_FILE);
+        if ($regSig !== $lastRegSig) {
+            $lastRegSig = $regSig;
+            if ($regSig !== '') {
                 $sum = bridges_summary();
                 $busyParts = [];
                 foreach ($sum as $b) {
@@ -1316,34 +1428,30 @@ if ($action === 'stream') {
         // Catálogo de algún puente cambió (carpetas/modelos/etc): aviso con el
         // id para que la web recargue solo si el puente activo es ese.
         foreach ((glob(DATA_DIR . '/catalog*.json') ?: []) as $f) {
-            $base = basename($f);
-            $id = $base === 'catalog.json' ? '' : preg_replace('/^catalog-|\.json$/', '', $base);
-            $rawF = (string)@file_get_contents($f);
-            $sigF = md5($rawF);
+            $sigF = $sigOf($f);
             if (!isset($lastCatSigs[$f])) {
                 $lastCatSigs[$f] = $sigF;
                 continue;
             }
             if ($lastCatSigs[$f] !== $sigF) {
                 $lastCatSigs[$f] = $sigF;
+                $base = basename($f);
+                $id = $base === 'catalog.json' ? '' : preg_replace('/^catalog-|\.json$/', '', $base);
                 $send('catalog', ['bridge' => (string)$id]);
             }
         }
-        if (file_exists(SESSIONS_FILE)) {
-            $raw = (string)@file_get_contents(SESSIONS_FILE);
-            $sig = md5($raw);
-            if ($sig !== $lastSessionsSig) {
-                $lastSessionsSig = $sig;
-                $send('sessions_changed', ['ts' => gmdate('c')]);
-            }
+        $sessSig = $sigOf(SESSIONS_FILE);
+        if ($sessSig !== $lastSessionsSig) {
+            $lastSessionsSig = $sessSig;
+            if ($sessSig !== '') $send('sessions_changed', ['ts' => gmdate('c')]);
         }
         // Un mensaje en curso (pending→processing→streaming→done) cambia su
         // messages-<id>.json sin tocar sessions.json. Para que las listas
         // muestren en vivo qué sesiones están trabajando, avisamos con el
         // mismo evento cuando cambia el archivo de mensajes más reciente
-        // (muestreo ~1 s, aviso mínimo cada 2 s para no inundar).
+        // (muestreo cada 2 s, aviso mínimo cada 2 s para no inundar).
         $nowSec = time();
-        if ($nowSec !== $lastMsgScanSec) {
+        if (($nowSec - $lastMsgScanSec) >= 2) {
             $lastMsgScanSec = $nowSec;
             $maxTs = 0;
             foreach ((glob(DATA_DIR . '/messages-*.json') ?: []) as $f) {
@@ -1359,10 +1467,10 @@ if ($action === 'stream') {
             }
         }
         // Keep-alive cada ~5 s para que proxies del hosting no corten la conexión.
-        if ((++$loopN % 10) === 0) {
+        if ((++$loopN % 5) === 0) {
             $send('ping', ['ts' => gmdate('c')]);
         }
-        usleep(500000); // 500 ms
+        usleep($loopMs * 1000); // 1 s
     }
     exit;
 }

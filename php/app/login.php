@@ -36,6 +36,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     if (!$csrfOk) {
         ob_login_error('Sesion expirada, recarga la pagina.', '');
     }
+    // Limite global por IP (todos los usuarios): frena el barrido de usuarios
+    // sin depender solo del lock por ip|usuario.
+    if (!ob_login_ip_rate_ok(30, 900)) {
+        ob_login_error('Demasiados intentos. Proba de nuevo en unos minutos.', '');
+    }
     $username = trim((string)($form['username'] ?? ''));
     $locked = ob_login_lock_remaining($username);
     if ($locked > 0) {

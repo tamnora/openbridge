@@ -34,6 +34,12 @@ define('PUSH_FILE', DATA_DIR . '/push.json');
 define('BRIDGES_FILE', DATA_DIR . '/bridges.json');
 define('PAIRINGS_FILE', DATA_DIR . '/pairings.json');
 define('MESSAGES_FILE', DATA_DIR . '/messages.json'); // legacy v1
+// Marca de "hay trabajo nuevo": send/commands/folders la tocan para despertar
+// el long-poll del puente sin que este tenga que releer todos los mensajes.
+define('WAKE_FILE', DATA_DIR . '/.wake');
+// Log de requests lentos (se activa con app.json.diag o OPENBRIDGE_DIAG=1).
+define('DIAG_LOG', DATA_DIR . '/.diag.log');
+define('DIAG_SLOW_MS', 1500);
 
 define('STALE_PROCESSING_SECONDS', 600);
 
@@ -89,6 +95,9 @@ define('APP_BASE_URL', rtrim((string)($OB_APP['baseUrl'] ?? ''), '/'));
 define('BRIDGE_TOKEN', (string)($OB_APP['bridgeToken'] ?? ''));
 define('OB_CSRF_SECRET', (string)($OB_APP['csrfSecret'] ?? ''));
 define('VAPID_SUBJECT', '');
+// Diagnostico: log de requests lentos. Se prende con app.json.diag=true o el
+// entorno OPENBRIDGE_DIAG=1 (util para medir el hosting sin editar la config).
+define('OB_DIAG', !empty($OB_APP['diag']) || getenv('OPENBRIDGE_DIAG') === '1');
 
 // VAPID: app.json guarda la privada en base64url cruda (32 bytes, formato
 // web-push). La lib PHP de OpenConex espera PKCS#8 DER en base64. La envolvemos

@@ -4,6 +4,47 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- Hub PHP: `?action=diag` (solo admin) con memoria del request, si hay `sodium` y
+  resumen de `data/` (tamano por archivo, sesiones, mensajes, puentes, suscripciones
+  y bytes de la cola de comandos). Log de requests lentos en `data/.diag.log`
+  (se activa con `app.json.diag=true` o `OPENBRIDGE_DIAG=1`).
+- `scripts/hub-budget.mjs`: estima el peso de `php/dist` y de `data/` sin tocar el
+  hosting. `docs/INFORME-HOSTING.md` con el analisis de seguridad y consumo.
+
+### Corregido
+
+- Hub PHP, aislamiento entre inquilinos: `respond`, `respond_partial`,
+  `cancel_status`, `session_import` y `session_tokens` ahora exigen que la sesion
+  pertenezca al puente que firma (o sea legacy sin dueno de su catalogo).
+- Hub PHP: la cookie **remember-me** incluye `pv` en la firma, asi cambiar la
+  contrasena invalida tambien el auto-login (antes sobrevivia).
+- Hub PHP: el push guarda el **dueno** de cada suscripcion y solo avisa a quienes
+  pueden ver ese puente; el envio se posterga al cierre del request
+  (`fastcgi_finish_request` si esta) y se limita a 20 dispositivos.
+- Hub PHP: rate limit con mutex y poda (`.login-lock.json`, `.pair-rate.json`) y
+  limite global por IP en el login.
+
+### Cambiado
+
+- Hub PHP, performance: el SSE usa firmas `mtime+size` (no lee los JSON enteros),
+  vuelve cada 1 s y muestrea mensajes cada 2 s; el long-poll del puente se despierta
+  por una marca (`data/.wake`) en vez de releer todos los `messages-*.json` cada
+  500 ms; `poll` no reescribe `sessions.json`/`catalogo` ni `bridges.json` si no
+  cambio nada; la version del catalogo se cachea en disco (`catalog*.json.ver`); la
+  cola de comandos se acota por bytes (tope 2 MB) ademas de por cantidad.
+- Hub PHP, performance: cache por request del catalogo y del registro de puentes
+  (antes `bridges_summary` los releia O(P^2)); y cache persistente del resumen de
+  sesiones (`data/.preview.json`) para no releer todos los `messages-*.json` en
+  cada `sessions`/`bootstrap` (el polling de la web cae ahi cada pocos segundos).
+- Panel derecho: boton **abrir ↗** para abrir la vista previa en una pestana nueva,
+  y el resizer de los paneles laterales con limites mas amplios.
+- **procs**: boton **reconsultar** (busca los procesos de la app una vez al entrar y
+  a demanda) y **detener todo** (corta todos los dev servers y cierra los tuneles).
+
 ## [0.7.1] - 2026-09-17
 
 

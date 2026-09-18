@@ -195,4 +195,40 @@ test('hub PHP: login, pairing y aislamiento por usuario', { skip: hasPhp ? false
     const userMsgs = hist.json.messages.filter((m) => m.role === 'user');
     assert.equal(userMsgs.length, 1);
     assert.equal(userMsgs[0].oc_msg, 'msg_u1');
+
+    // Diagnostico: solo admin.
+    const diag = await api('diag', { cookie: admin.cookie });
+    assert.equal(diag.json.ok, true);
+    assert.equal(typeof diag.json.memory_peak_bytes, 'number');
+    assert.ok(diag.json.data && typeof diag.json.data.total_bytes === 'number');
+    const diagBob = await api('diag', { cookie: bob.cookie });
+    assert.equal(diagBob.status, 403);
+
+    // Aislamiento entre inquilinos: una segunda PC (de bob) no puede responder
+    // ni importar la sesion del puente de admin.
+    const start2 = await api('bridge_pair_start', { method: 'POST', body: { bridge_id: 'pc2', bridge_name: 'PC 2' } });
+    const approve2 = await api('bridge_pair_approve', { method: 'POST', body: { user_code: start2.json.user_code }, cookie: bob.cookie, csrf: bob.csrf });
+    assert.equal(approve2.json.ok, true);
+    const poll2 = await api('bridge_pair_poll', { method: 'POST', body: { device_code: start2.json.device_code } });
+    assert.equal(poll2.json.status, 'approved');
+
+    const foreign = await api('respond', { method: 'POST', token: poll2.json.bridge_token, body: { session_id: sid, user_id: sent.json.id, text: 'intruso' } });
+    assert.equal(foreign.status, 403);
+    const foreignImport = await api('session_import', { method: 'POST', token: poll2.json.bridge_token, body: impBody([{ role: 'assistant', text: 'x', ts: '2026-01-01T00:02:00Z', oc_msg: 'msg_x' }]) });
+    assert.equal(foreignImport.json.ok, false);
+
+    // El puente dueno si puede responder.
+    const own = await api('respond', { method: 'POST', token: poll.json.bridge_token, body: { session_id: sid, user_id: sent.json.id, text: 'respuesta' } });
+    assert.equal(own.json.ok, true);
+
+    // Cache de resumen de sesiones: refleja el ultimo mensaje y es estable
+    // entre llamadas consecutivas (no releyo mal los messages-*.json).
+    const s1 = await api('sessions', { cookie: admin.cookie });
+    const row1 = s1.json.sessions.find((s) => s.id === sid);
+    assert.equal(row1.preview_role, 'assistant');
+    assert.match(row1.preview, /respuesta/);
+    const s2 = await api('sessions', { cookie: admin.cookie });
+    const row2 = s2.json.sessions.find((s) => s.id === sid);
+    assert.equal(row2.preview, row1.preview);
+    assert.equal(row2.last_ts, row1.last_ts);
 });

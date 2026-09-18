@@ -232,8 +232,11 @@ function ob_start_session($user, $remember = false) {
     ob_set_cookie(OB_LASTUSER_COOKIE, (string)$user['name'], 365 * 86400);
     if ($remember) {
         $exp = time() + OB_SESSION_TTL;
-        $sig = hash_hmac('sha256', $user['id'] . '|' . $exp, OB_CSRF_SECRET);
-        ob_set_cookie(OB_REMEMBER_COOKIE, ob_b64url($user['id'] . '|' . $exp . '|' . $sig), OB_SESSION_TTL);
+        // Incluye pv en la firma: al cambiar la contrasena (pv++) la cookie
+        // remember deja de valer, igual que la de sesion.
+        $pv = (int)($user['pv'] ?? 1);
+        $sig = hash_hmac('sha256', $user['id'] . '|' . $exp . '|' . $pv, OB_CSRF_SECRET);
+        ob_set_cookie(OB_REMEMBER_COOKIE, ob_b64url($user['id'] . '|' . $exp . '|' . $pv . '|' . $sig), OB_SESSION_TTL);
     }
 }
 function ob_end_session() {
@@ -245,12 +248,16 @@ function ob_remember_auto_login() {
     $raw = ob_b64url_dec(ob_cookie(OB_REMEMBER_COOKIE));
     if (!is_string($raw) || $raw === '') return false;
     $parts = explode('|', $raw);
-    if (count($parts) !== 3) return false;
-    list($uid, $exp, $sig) = $parts;
+    // Formato actual: uid|exp|pv|sig. Las cookies viejas (3 partes) se
+    // rechazan a proposito: obligan a un login nuevo tras esta actualizacion.
+    if (count($parts) !== 4) return false;
+    list($uid, $exp, $pv, $sig) = $parts;
     if (!ctype_digit((string)$exp) || (int)$exp < time()) return false;
-    if (!hash_equals(hash_hmac('sha256', $uid . '|' . $exp, OB_CSRF_SECRET), $sig)) return false;
+    if (!ctype_digit((string)$pv)) return false;
+    if (!hash_equals(hash_hmac('sha256', $uid . '|' . $exp . '|' . $pv, OB_CSRF_SECRET), $sig)) return false;
     $user = ob_user_by_id($uid);
     if (!$user || !empty($user['disabled'])) return false;
+    if ((int)($user['pv'] ?? 1) !== (int)$pv) return false; // clave cambiada
     ob_start_session($user, false);
     return true;
 }
@@ -261,6 +268,9 @@ function ob_remember_auto_login() {
 function ob_login_lock_file() {
     return DATA_DIR . '/.login-lock.json';
 }
+function ob_login_ip_file() {
+    return DATA_DIR . '/.login-ip.json';
+}
 function ob_login_lock_remaining($username) {
     $all = @json_decode((string)@file_get_contents(ob_login_lock_file()), true);
     if (!is_array($all)) return 0;
@@ -269,28 +279,56 @@ function ob_login_lock_remaining($username) {
     if (!is_array($e) || empty($e['until'])) return 0;
     return max(0, (int)$e['until'] - time());
 }
+// Modificacion atomica (mutex + rename) de un mapa JSON, con poda de entradas
+// vencidas y tope duro de tamano para que no crezcan sin limite.
+function ob_rate_modify($path, $fn) {
+    return file_lock_modify($path, function () { return []; }, function (&$all) use ($fn) {
+        $now = time();
+        foreach ($all as $k => $e) {
+            if (!is_array($e)) { unset($all[$k]); continue; }
+            $until = (int)($e['until'] ?? 0);
+            $t = (int)($e['t'] ?? $e['seen'] ?? 0);
+            if (($until > 0 && $until < $now) || ($until === 0 && $t > 0 && ($now - $t) > 900)) {
+                unset($all[$k]);
+            }
+        }
+        $fn($all, $now);
+        if (count($all) > 500) $all = array_slice($all, -500, null, true);
+    });
+}
 function ob_login_record_failure($username) {
-    $path = ob_login_lock_file();
-    $all = @json_decode((string)@file_get_contents($path), true);
-    if (!is_array($all)) $all = [];
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'x';
-    $key = strtolower($ip . '|' . $username);
-    $e = $all[$key] ?? ['fails' => 0, 'until' => 0];
-    $e['fails'] = (int)$e['fails'] + 1;
-    if ($e['fails'] >= 5) {
-        $e['until'] = time() + 900;
-        $e['fails'] = 0;
-    }
-    $all[$key] = $e;
-    @file_put_contents($path, json_encode($all), LOCK_EX);
+    ob_rate_modify(ob_login_lock_file(), function (&$all, $now) use ($username, $ip) {
+        $key = strtolower($ip . '|' . $username);
+        $e = isset($all[$key]) && is_array($all[$key]) ? $all[$key] : ['fails' => 0, 'until' => 0];
+        $e['fails'] = (int)$e['fails'] + 1;
+        $e['seen'] = $now;
+        if ($e['fails'] >= 5) {
+            $e['until'] = $now + 900;
+            $e['fails'] = 0;
+        }
+        $all[$key] = $e;
+    });
 }
 function ob_login_clear($username) {
-    $path = ob_login_lock_file();
-    $all = @json_decode((string)@file_get_contents($path), true);
-    if (!is_array($all)) return;
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'x';
-    unset($all[strtolower($ip . '|' . $username)]);
-    @file_put_contents($path, json_encode($all), LOCK_EX);
+    ob_rate_modify(ob_login_lock_file(), function (&$all) use ($username, $ip) {
+        unset($all[strtolower($ip . '|' . $username)]);
+    });
+}
+// Limite global por IP (todos los usuarios): corta un ataque distribuido por
+// nombre de usuario sin depender solo del lock ip|usuario.
+function ob_login_ip_rate_ok($max = 30, $window = 900) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'x';
+    $ok = true;
+    ob_rate_modify(ob_login_ip_file(), function (&$all, $now) use ($ip, $max, $window, &$ok) {
+        $e = isset($all[$ip]) && is_array($all[$ip]) ? $all[$ip] : ['n' => 0, 't' => $now];
+        if (($now - (int)($e['t'] ?? 0)) > $window) $e = ['n' => 0, 't' => $now];
+        $e['n'] = (int)($e['n'] ?? 0) + 1;
+        $all[$ip] = $e;
+        $ok = $e['n'] <= $max;
+    });
+    return $ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +537,7 @@ function ob_bridge_upsert($id, $name, $owner, $tokenHash) {
     $tmp = BRIDGES_FILE . '.' . getmypid() . '.tmp';
     @file_put_contents($tmp, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
     @rename($tmp, BRIDGES_FILE);
+    bridges_cache_forget();
 }
 function ob_bridge_revoke($id, $user) {
     $data = @json_decode((string)@file_get_contents(BRIDGES_FILE), true);
@@ -508,6 +547,7 @@ function ob_bridge_revoke($id, $user) {
     $tmp = BRIDGES_FILE . '.' . getmypid() . '.tmp';
     @file_put_contents($tmp, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
     @rename($tmp, BRIDGES_FILE);
+    bridges_cache_forget();
     return true;
 }
 function ob_bridges_list($user) {
@@ -532,17 +572,17 @@ function ob_bridges_list($user) {
 // ---------------------------------------------------------------------------
 function ob_pair_rate_ok($key, $max = 10, $window = 900) {
     $path = DATA_DIR . '/.pair-rate.json';
-    $all = @json_decode((string)@file_get_contents($path), true);
-    if (!is_array($all)) $all = [];
-    $now = time();
-    $e = isset($all[$key]) && is_array($all[$key]) ? $all[$key] : ['n' => 0, 't' => $now];
-    if ($now - (int)($e['t'] ?? 0) > $window) {
-        $e = ['n' => 0, 't' => $now];
-    }
-    $e['n'] = (int)($e['n'] ?? 0) + 1;
-    $all[$key] = $e;
-    @file_put_contents($path, json_encode($all), LOCK_EX);
-    return $e['n'] <= $max;
+    $ok = true;
+    ob_rate_modify($path, function (&$all, $now) use ($key, $max, $window, &$ok) {
+        $e = isset($all[$key]) && is_array($all[$key]) ? $all[$key] : ['n' => 0, 't' => $now];
+        if (($now - (int)($e['t'] ?? 0)) > $window) {
+            $e = ['n' => 0, 't' => $now];
+        }
+        $e['n'] = (int)($e['n'] ?? 0) + 1;
+        $all[$key] = $e;
+        $ok = $e['n'] <= $max;
+    });
+    return $ok;
 }
 
 // ---------------------------------------------------------------------------

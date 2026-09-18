@@ -96,9 +96,19 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
       dueño (`owner`) en `bridges.json`; vista **Dispositivos** (gateada por
       `features.pairing`); aislamiento entre usuarios (admin ve todo).
 - [x] `scripts/build-php-hub.mjs` (arma `php/dist`) y `docs/DEPLOY-PHP.md`.
+- [x] Analisis de seguridad y consumo del hosting (`docs/INFORME-HOSTING.md`) con
+      `?action=diag`, log de requests lentos y `scripts/hub-budget.mjs`.
+- [x] Performance/seguridad del hub PHP: SSE con firmas `mtime+size`, long-poll
+      despertado por marca, `poll` sin escrituras ociosas, version de catalogo
+      cacheada, cache por request (catalogo/puentes) y resumen de sesiones
+      (`data/.preview.json`), cola de comandos acotada por bytes, aislamiento
+      entre inquilinos (`respond`/`session_import`/`session_tokens`), remember-me
+      con `pv` y push por dueno.
 - [ ] **Desplegar** en cPanel (subdominio + SSL, subir `php/dist`, `data/` 0755/0775)
       y emparejar las PCs reales. Confirmar que el hosting tenga `sodium`.
 - [ ] Backport del pairing/dueno al hub Node (paridad; hoy solo PHP).
+- [ ] Backport al hub Node de las mejoras del informe (aislamiento en `respond`,
+      push por dueno, remember con `pv`) para mantener paridad de comportamiento.
 
 ## 2d. Sincronizacion (historial unico)
 

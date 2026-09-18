@@ -119,6 +119,15 @@ opencode en su barrido, asi que el historial se va poblando solo. No subas un
 - **Login lento**: falta `sodium`. Activala o cambia a un plan con esa extension.
 - **`php -S` local**: sirve para probar, pero es mono-hilo (el long-poll bloquea).
   En el hosting real corre Apache/LiteSpeed con multiples workers.
+- **Medir consumo**: `GET api.php?action=diag` (solo admin) devuelve memoria,
+  `sodium` y un resumen de `data/`. Con `app.json.diag=true` (o
+  `OPENBRIDGE_DIAG=1`) los requests de mas de 1.5 s quedan en `data/.diag.log`.
+  En la PC, `node scripts/hub-budget.mjs` estima el peso de `php/dist` y de
+  `data/`. En cPanel, *Metrics -> Resource Usage* (Entry Processes, CPU, I/O).
+  Ver `docs/INFORME-HOSTING.md`.
 - **Seguridad**: `.openbridge/` (secretos + datos) y `config.php`/`lib.php`/`hub.php`
   estan bloqueados por `.htaccess`. El hub escucha por HTTPS (cPanel) y usa cookies
-  `Secure` detras del proxy.
+  `Secure` detras del proxy. **Si el hosting tiene `AllowOverride None`** los
+  `.htaccess` se ignoran: apunta el docroot a una carpeta `public/` con solo
+  `api.php`/paginas/estaticos, o mueve `.openbridge/` fuera del docroot y define
+  `OPENBRIDGE_HOME` (defensa en profundidad, no dependas solo del `.htaccess`).
