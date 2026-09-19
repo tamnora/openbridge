@@ -4,6 +4,26 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- **Medidor de contexto** de la sesion activa en la barra de estado: barra y `%`
+  coloreados por nivel (verde <25%, amarillo <50%, naranja <75%, rojo >=75%).
+  En movil se oculta la barra y queda solo el `%` coloreado.
+- Animacion de **"cargando"** tipo KITT (rejilla segmentada + haz que rebota) en
+  el chat, el diff y el arbol del panel; respeta `prefers-reduced-motion`.
+
+### Cambiado
+
+- Header mas limpio: solo **titulo + proyecto**. El modelo/agente, el consumo y
+  el costo se movieron a la barra de estado para no repetir datos.
+- La barra de estado muestra **solo la sesion activa**: se quito el texto
+  `conectado` (queda el punto de estado) y los totales del proyecto (`N chats` y
+  costo total).
+- Iconos del header con el **mismo tamano** (34x34) y alineados; el nombre de la
+  tool (`glob`, etc.) ya no se parte en pantallas angostas.
+
 ## [0.12.0] - 2026-09-19
 
 

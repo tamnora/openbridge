@@ -301,10 +301,11 @@ en primer plano), `stop`, `status`, `qr`, `tunnel`, `logs` (`--follow`), `bridge
 **multiusuario** con roles `admin`/`user` y rate limit; API completa y SSE;
 catálogo por PC; Web Push; túnel (TunnelMole/ngrok/cloudflare); y en la web: chat
 con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
-tokens/contexto y **costo** por sesión, vista de archivos, **panel derecho** de
-estructura y vista previa (escritorio), **procs** con detección de dev run por
+**medidor de contexto** de la sesión activa (barra y % en verde/amarillo/naranja/rojo)
+y **costo** por sesión en la barra de estado, vista de archivos, **panel derecho**
+de estructura y vista previa (escritorio), **procs** con detección de dev run por
 proyecto, vista de **cambios** (git status/diff) con **revertir**, búsqueda global,
-sesiones de opencode y **autor** en cada mensaje. Tests en `npm test` (40).
+sesiones de opencode y **autor** en cada mensaje. Tests en `npm test` (61).
 
 ## Licencia
 

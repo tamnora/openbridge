@@ -25,7 +25,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   `openbridge tunnel` y `init --domain`.
 - QR propio (`src/qr.js`, sin dependencias): en `init`/`status`/`server` y `openbridge qr`.
 - `bridge.js` parametrizado para la casa portable, con overrides por entorno.
-- Tests (`node --test`): **40/40** (smoke, auth/roles, API, QR, release, bridge
+- Tests (`node --test`): **61/61** (smoke, auth/roles, API, QR, release, bridge
   end-to-end con opencode mockeado, CLI, store/import, `safeJoinWorkspace`,
   migración, hub PHP end-to-end con `php -S`). CI Windows/Linux/macOS.
 - Release privado (`scripts/release.mjs`): guard de dueño, semver/prerelease y dist-tags.
@@ -63,11 +63,13 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Mensaje claro cuando el **puerto está ocupado**.
 - [x] Guard de **Node < 18** con mensaje amigable.
 - [x] ~~**Login solo con contrasena**~~: se volvio a **usuario + contrasena** al sumar multiusuario.
-- [x] Ver **tokens consumidos y capacidad de contexto** por sesion (sidebar, encabezado, statusbar y franja de trabajo).
-- [x] Indicador **KITT** con bordes y estela luminosa.
+- [x] Ver **tokens consumidos y capacidad de contexto** por sesion (sidebar y barra de estado, solo la sesion activa; la franja de trabajo muestra el estado).
+- [x] **Medidor de contexto** con color por nivel: verde <25%, amarillo <50%, naranja <75%, rojo >=75% (barra + % en la barra de estado; en movil solo el %).
+- [x] Indicador **KITT** con bordes y estela luminosa; tambien como animacion de "cargando" (scanner con rejilla segmentada).
+- [x] Ajustes de UI (movil): el nombre de la tool no se parte, iconos del header del mismo tamano, y header/footer sin repetir datos (header = titulo + proyecto; footer = consumo de la sesion activa).
 - [x] **Dictado por voz** en el compositor (Web Speech API; se oculta si el navegador no la soporta).
 - [x] **QR** de la URL en `init`/`status`/`server` y comando `openbridge qr` (generador propio, sin dependencias).
-- [x] **Costo acumulado** (USD) por sesion y total en el sidebar, encabezado y statusbar.
+- [x] **Costo acumulado** (USD) por sesion en el sidebar y la barra de estado.
 - [x] Vista **"cambios"** (git status + diff) del proyecto de la sesion, via el puente (funciona local y remoto).
 - [x] Boton **revertir** cambios rastreados desde la vista "cambios" (con confirmacion; no toca archivos nuevos).
 - [x] **Plantillas de prompts** guardadas en el navegador (insertar/borrar/guardar lo escrito).
