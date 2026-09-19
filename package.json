@@ -1,6 +1,6 @@
 {
   "name": "@danieltmn/openbridge",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Tu opencode en el celular, sin hosting: corre la app, el puente y un tunel publico desde tu PC.",
   "type": "commonjs",
   "author": "tamnora",
