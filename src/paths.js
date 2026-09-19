@@ -70,6 +70,25 @@ function bridgeCatalogFile(id) {
     return p('data', 'catalog-' + id.replace(/[^A-Za-z0-9._-]/g, '') + '.json');
 }
 
+// Indice liviano de sesiones de opencode (metadatos, sin historial).
+function sessionIndexFile(id) {
+    if (!id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(id)) return p('data', 'index.json');
+    return p('data', 'index-' + id.replace(/[^A-Za-z0-9._-]/g, '') + '.json');
+}
+// Resultado efimero de una lectura grande (historial por proxy); se borra al
+// consumirse.
+function fetchFile(id) { return p('data', 'fetch-' + (parseInt(id, 10) || 0) + '.json'); }
+// Cola de mensajes salientes por puente (transitoria: se vacia al ejecutarse).
+function queueFile(id) {
+    if (!id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(id)) return p('data', 'queue.json');
+    return p('data', 'queue-' + id.replace(/[^A-Za-z0-9._-]/g, '') + '.json');
+}
+// Turno en curso (streaming) por puente; se limpia al terminar.
+function inflightFile(id) {
+    if (!id || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(id)) return p('data', 'inflight.json');
+    return p('data', 'inflight-' + id.replace(/[^A-Za-z0-9._-]/g, '') + '.json');
+}
+
 // ---------------------------------------------------------------------------
 // Migracion del layout viejo (archivos sueltos en la base) a `.openbridge/`
 // ---------------------------------------------------------------------------
@@ -148,5 +167,7 @@ module.exports = {
     dataDir, logsDir, serverLogPath, bridgeLogPath,
     syncStatePath, procsStatePath,
     sessionsFile, catalogFile, bridgesFile, pushFile, messagesFile, bridgeCatalogFile,
+    sessionIndexFile, fetchFile,
+    queueFile, inflightFile,
     migrate, ensureDirs, exists,
 };

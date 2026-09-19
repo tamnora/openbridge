@@ -621,6 +621,47 @@
         /* Aire extra en el cambio de turno: lo tuyo ↔ lo que responde el agente */
         .msg.mine + .msg.theirs,
         .msg.theirs + .msg.mine { margin-top: 10px; }
+        /* ----- Tarjetas de tool (vista tipo TUI) ----- */
+        .toolcard {
+            border: 1px solid var(--border);
+            border-left: 2px solid var(--muted);
+            border-radius: 6px;
+            margin: 6px 0;
+            background: var(--code-bg, var(--bg));
+            overflow: hidden;
+        }
+        .toolcard.running { border-left-color: var(--warn-text, #d29922); }
+        .toolcard.error { border-left-color: var(--danger); }
+        .toolcard .toolhead {
+            display: flex; align-items: center; gap: 8px;
+            padding: 6px 10px; cursor: pointer;
+            font-size: 12px;
+        }
+        .toolcard .toolname {
+            font-weight: 700; letter-spacing: .04em;
+            color: var(--accent); text-transform: lowercase;
+        }
+        .toolcard .tooltitle { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .toolcard .toolspin {
+            width: 10px; height: 10px; border-radius: 50%;
+            border: 2px solid var(--border); border-top-color: var(--accent);
+            flex-shrink: 0;
+        }
+        .toolcard.running .toolspin { animation: toolspin .8s linear infinite; }
+        .toolcard:not(.running) .toolspin { border-top-color: var(--muted); opacity: .5; }
+        @keyframes toolspin { to { transform: rotate(360deg); } }
+        .toolcard .toolbody { display: none; padding: 0 10px 8px; }
+        .toolcard.open .toolbody { display: block; }
+        .toolcard pre.toolinput,
+        .toolcard pre.tooloutput {
+            margin: 4px 0 0; padding: 7px 9px; border-radius: 5px;
+            background: var(--bg); border: 1px solid var(--border);
+            font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+            word-break: break-word; max-height: 320px; overflow: auto;
+        }
+        .toolcard pre.toolinput { color: var(--muted); }
+        .toolcard.new { animation: toolin .25s ease-out; }
+        @keyframes toolin { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
         pre.codeblock {
             background: var(--code-bg, var(--bg));
             border: 1px solid var(--border);
@@ -965,6 +1006,15 @@
         .modal input:focus, .modal select:focus, .modal textarea:focus { border-color: var(--accent); }
         .modal select optgroup { color: var(--muted); font-style: normal; }
         .modal select optgroup option { color: var(--text); }
+        .mfav { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+        .mfav .chip {
+            display: inline-flex; align-items: center; gap: 5px;
+            border: 1px solid var(--border); border-radius: 20px;
+            padding: 2px 8px; font-size: 11.5px;
+        }
+        .mfav .chip.def { border-color: var(--mine); color: var(--mine); }
+        .mfav .chip button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 2px; }
+        .mfav-actions { display: flex; gap: 10px; margin-top: 6px; }
         .modal .row { display: flex; gap: 10px; margin-top: 12px; }
         .modal button {
             flex: 1; padding: 11px; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -1444,6 +1494,12 @@
             <select id="fModel2"></select>
             <label for="fAgent2">Cómo debe actuar</label>
             <select id="fAgent2"></select>
+            <label>Favoritos <span id="mFavCount" style="color:var(--muted);font-weight:400"></span></label>
+            <div id="mFavList" class="mfav"></div>
+            <div class="mfav-actions">
+                <button type="button" class="linkbtn" id="mFavAdd">⭐ marcar el elegido</button>
+                <button type="button" class="linkbtn" id="mFavSave">guardar favoritos</button>
+            </div>
             <div class="warn" id="mWarn" style="display:none">el puente aún no sincronizó modelos.</div>
             <div class="hint" style="font-size:11px;color:var(--muted);margin-top:8px">aplica desde el próximo mensaje · la conversación continúa igual</div>
             <div class="row">

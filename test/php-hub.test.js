@@ -178,23 +178,31 @@ test('hub PHP: login, pairing y aislamiento por usuario', { skip: hasPhp ? false
     assert.equal(cat.json.ok, true);
     assert.equal(cat.json.catalog.models_ctx['p/m'], 200000);
 
-    // Import: dedupe por oc_msg y adopcion del mensaje optimista de la web.
+    // Import legacy: dedupe por oc_msg (sigue soportado).
     const impBody = (messages) => ({ opencode_session: 'ses_test0001', folder: 'C:/demo', name: 'Chat', messages });
     const imp1 = await api('session_import', { method: 'POST', token: poll.json.bridge_token, body: impBody([{ role: 'assistant', text: 'hola', ts: '2026-01-01T00:00:00Z', oc_msg: 'msg_a1' }]) });
     assert.equal(imp1.json.ok, true);
     assert.equal(imp1.json.added, 1);
     const sid = imp1.json.session_id;
-    const imp2 = await api('session_import', { method: 'POST', token: poll.json.bridge_token, body: impBody([{ role: 'assistant', text: 'hola', ts: '2026-01-01T00:00:05Z', oc_msg: 'msg_a1' }]) });
-    assert.equal(imp2.json.added, 0);
+
+    // send: va a la cola transitoria (el hub no guarda el mensaje).
     const sent = await api('send', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { session: sid, text: 'dale' } });
     assert.equal(sent.json.ok, true);
-    const imp3 = await api('session_import', { method: 'POST', token: poll.json.bridge_token, body: impBody([{ role: 'user', text: 'dale', ts: '2026-01-01T00:01:00Z', oc_msg: 'msg_u1' }]) });
-    assert.equal(imp3.json.added, 0);
     const hist = await api('history&session=' + sid, { cookie: admin.cookie });
     assert.equal(hist.json.ok, true);
-    const userMsgs = hist.json.messages.filter((m) => m.role === 'user');
-    assert.equal(userMsgs.length, 1);
-    assert.equal(userMsgs[0].oc_msg, 'msg_u1');
+    assert.ok(Array.isArray(hist.json.queue) && hist.json.queue.length === 1);
+    assert.equal(hist.json.queue[0].text, 'dale');
+
+    // poll: el puente reclama el mensaje de la cola.
+    const pollQueue = await api('poll', { method: 'POST', token: poll.json.bridge_token, body: {} });
+    assert.ok((pollQueue.json.messages || []).some((m) => m.text === 'dale'));
+
+    // respond: el turno queda en opencode; se limpia cola e inflight.
+    const qMsg = pollQueue.json.messages.find((m) => m.text === 'dale');
+    const resp = await api('respond', { method: 'POST', token: poll.json.bridge_token, body: { session_id: sid, user_id: qMsg.id, text: 'ok', opencode_session: 'ses_test0001' } });
+    assert.equal(resp.json.ok, true);
+    const hist2 = await api('history&session=' + sid, { cookie: admin.cookie });
+    assert.equal(hist2.json.queue.length, 0);
 
     // Diagnostico: solo admin.
     const diag = await api('diag', { cookie: admin.cookie });
@@ -221,14 +229,10 @@ test('hub PHP: login, pairing y aislamiento por usuario', { skip: hasPhp ? false
     const own = await api('respond', { method: 'POST', token: poll.json.bridge_token, body: { session_id: sid, user_id: sent.json.id, text: 'respuesta' } });
     assert.equal(own.json.ok, true);
 
-    // Cache de resumen de sesiones: refleja el ultimo mensaje y es estable
-    // entre llamadas consecutivas (no releyo mal los messages-*.json).
+    // La sesion sigue en el registro del hub (metadatos) tras responder; el
+    // historial ya no se guarda (vive en opencode).
     const s1 = await api('sessions', { cookie: admin.cookie });
     const row1 = s1.json.sessions.find((s) => s.id === sid);
-    assert.equal(row1.preview_role, 'assistant');
-    assert.match(row1.preview, /respuesta/);
-    const s2 = await api('sessions', { cookie: admin.cookie });
-    const row2 = s2.json.sessions.find((s) => s.id === sid);
-    assert.equal(row2.preview, row1.preview);
-    assert.equal(row2.last_ts, row1.last_ts);
+    assert.ok(row1, 'la sesion sigue en el registro');
+    assert.ok(row1.last_ts);
 });

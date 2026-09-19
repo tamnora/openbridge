@@ -30,7 +30,8 @@ const MOCK_OC = [
     "} else if (args[0] === 'models') {",
     "    out('mock/model');",
     "} else if (args[0] === 'run') {",
-    "    out(JSON.stringify({ type: 'text', sessionID: 'ses_mock1', part: { text: 'respuesta mock' } }));",
+    "    out(JSON.stringify({ type: 'text', sessionID: 'ses_mock1', part: { id: 'prt_x1', messageID: 'msg_x1', text: 'respuesta mock' } }));",
+    "    out(JSON.stringify({ type: 'tool', sessionID: 'ses_mock1', part: { id: 'prt_t1', messageID: 'msg_x1', tool: 'bash', callID: 'call_1', state: { status: 'completed', title: 'echo hola', input: { command: 'echo hola' }, output: 'hola' } } }));",
     "} else if (args[0] === 'export') {",
     "    out(JSON.stringify({ info: { directory: process.cwd(), title: 'mock', cost: 0.001, tokens: { input: 1, output: 2, reasoning: 0 } }, messages: [] }));",
     "} else if (args[0] === 'mcp') {",
@@ -182,6 +183,9 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     assert.equal(payload.session_id, 'c1');
     assert.equal(payload.user_id, 7);
     assert.match(payload.text, /respuesta mock/);
+    assert.ok(Array.isArray(payload.parts), 'el respond incluye las partes (vista tipo TUI)');
+    assert.ok(payload.parts.some((p) => p.type === 'tool' && p.tool === 'bash'), 'incluye la parte de tool');
+    assert.ok(payload.parts.some((p) => p.type === 'text' && /respuesta mock/.test(p.text)), 'incluye la parte de texto');
     assert.equal(payload.opencode_session, 'ses_mock1');
     assert.ok(api.seen.includes('ping'), 'el puente debe hacer ping al arrancar');
     assert.ok(api.seen.includes('sync_catalog'), 'el puente debe sincronizar el catalogo');

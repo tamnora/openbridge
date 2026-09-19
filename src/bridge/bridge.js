@@ -227,6 +227,10 @@ function loadConfig() {
                 agents: ['build', 'plan'],
                 bridgeId: '',
                 bridgeName: '',
+                // Modo proxy: el hub no guarda el historial de las sesiones; el
+                // barrido publica el indice liviano y la web pide el historial
+                // on demand (session_history). La conversacion vive en opencode.
+                proxyHistory: true,
                 // Procesos de desarrollo lanzados desde la web (proc_start...).
                 // bins mapea un nombre a una ruta (p. ej. php fuera del PATH).
                 processes: {
@@ -550,22 +554,42 @@ function streamCli(args, opts, onPartial) {
         let errorText = '';
         const texts = [];
         const reasons = [];
+        // Estructura tipo TUI: partes ordenadas (texto, razonamiento, tool).
+        const parts = [];
+        const partIdx = new Map();
         let flushedText = null;
         let flushedReasoning = null;
+        let flushedParts = null;
         let lineBuf = '';
 
         function flush(v) {
             try { onPartial(v); } catch (e) {}
         }
 
+        // Inserta o actualiza una parte por su id (los `tool` cambian de estado
+        // varias veces: running -> completed/error).
+        function putPart(p) {
+            const pid = p && p.id ? String(p.id) : '';
+            if (pid && partIdx.has(pid)) { parts[partIdx.get(pid)] = p; return; }
+            if (pid) partIdx.set(pid, parts.length);
+            parts.push(p);
+        }
+
+        function partsSig() {
+            const last = parts.length ? parts[parts.length - 1] : null;
+            return parts.length + '|' + (last && last.type === 'tool' && last.state ? last.state.status : '');
+        }
+
         function drain() {
             const acc = texts.join('\n').trim();
             const rac = reasons.join('\n').trim();
-            if (acc === flushedText && rac === flushedReasoning) return;
-            if (!acc && !rac) return;
+            const psig = partsSig();
+            if (acc === flushedText && rac === flushedReasoning && psig === flushedParts) return;
+            if (!acc && !rac && !parts.length) return;
             flushedText = acc;
             flushedReasoning = rac;
-            flush({ text: acc, reasoning: rac });
+            flushedParts = psig;
+            flush({ text: acc, reasoning: rac, parts: parts.slice() });
         }
 
         // Resultado común de las tres salidas (timeout, cancelación, cierre).
@@ -581,6 +605,7 @@ function streamCli(args, opts, onPartial) {
                 code: null,
                 text: parsed || fallback,
                 reasoning: reasons.join('\n').trim(),
+                parts: parts.slice(),
                 killed: false,
                 canceled: false,
                 sessionID: sessionID,
@@ -641,12 +666,21 @@ function streamCli(args, opts, onPartial) {
             }
             if (!ev || typeof ev !== 'object') return;
             if (ev.sessionID && !sessionID) sessionID = ev.sessionID;
-            if (ev.part && typeof ev.part.text === 'string') {
-                if (ev.type === 'text') texts.push(ev.part.text);
-                else if (ev.type === 'reasoning') reasons.push(ev.part.text);
+            if (ev.part && typeof ev.part === 'object') {
+                if (ev.type === 'text' && typeof ev.part.text === 'string') {
+                    texts.push(ev.part.text);
+                    putPart({ type: 'text', id: ev.part.id, text: ev.part.text });
+                } else if (ev.type === 'reasoning' && typeof ev.part.text === 'string') {
+                    reasons.push(ev.part.text);
+                    putPart({ type: 'reasoning', id: ev.part.id, text: ev.part.text });
+                } else if (ev.type === 'tool') {
+                    putPart({ type: 'tool', id: ev.part.id, tool: ev.part.tool, callID: ev.part.callID, state: ev.part.state });
+                }
                 // Id del mensaje de opencode (msg_...): identifica la respuesta
-                // para que el hub no la duplique al importar del TUI.
-                if (typeof ev.messageID === 'string' && ev.messageID) assistantMsgID = ev.messageID;
+                // para que el hub no la duplique al importar del TUI. En el
+                // stream JSON viene en `part.messageID`.
+                const mid = ev.messageID || ev.part.messageID;
+                if (typeof mid === 'string' && mid) assistantMsgID = mid;
             }
             if (ev.type === 'error') {
                 errorText = errorMessage(ev);
@@ -851,7 +885,10 @@ async function runOpencode(msg, onPartial) {
     if (msg.opencode_session) {
         args.push('--session', msg.opencode_session);
     } else {
-        args.push('--title', 'bridge-' + msg.session_id);
+        // Nombre elegido en la web como titulo de opencode (asi coinciden). Si
+        // es un placeholder, dejamos que opencode titula solo desde el prompt.
+        const nm = (msg.session && msg.session.name) ? String(msg.session.name).trim() : '';
+        if (nm && !/^Chat \d+$/.test(nm) && !/^bridge-\d+$/.test(nm)) args.push('--title', nm);
     }
 
     // Imagen adjunta desde la web (dataURL) → archivo temporal → --file.
@@ -907,7 +944,7 @@ async function runOpencode(msg, onPartial) {
         log('aviso: no se pudo detectar la sesión en el stream.');
     }
 
-    return { text: out, reasoning: r.reasoning || '', opencodeSession: reached, errorText: r.errorText || '', canceled: !!r.canceled };
+    return { text: out, reasoning: r.reasoning || '', parts: r.parts || [], opencodeSession: reached, errorText: r.errorText || '', canceled: !!r.canceled };
 }
 
 // ---------------------------------------------------------------------------
@@ -941,9 +978,10 @@ function partialPoster(msg) {
     return async (partial) => {
         const text = String((partial && partial.text) || '').trim();
         const reasoning = String((partial && partial.reasoning) || '').trim();
-        if (!text && !reasoning) return;
+        const parts = Array.isArray(partial && partial.parts) ? partial.parts : [];
+        if (!text && !reasoning && !parts.length) return;
         try {
-            await api('respond_partial', { session_id: msg.session_id, user_id: msg.id, text: text, reasoning: reasoning }, msg._t);
+            await api('respond_partial', { session_id: msg.session_id, user_id: msg.id, text: text, reasoning: reasoning, parts: parts }, msg._t);
         } catch (e) { /* parciales son best-effort */ }
     };
 }
@@ -1421,6 +1459,141 @@ async function exportAndImport(folder, sess, target, opts) {
     return { realDir: realDir, added: (res && parseInt(res.added, 10)) || 0, session_id: (res && res.session_id) || null };
 }
 
+// ---------------------------------------------------------------------------
+// Proxy de historial: el hub no guarda conversaciones. La web pide el historial
+// de una sesion y el puente lo saca del export de opencode, normalizado a la
+// estructura tipo TUI (partes: texto, razonamiento, tool, imagen).
+// ---------------------------------------------------------------------------
+// opencode guarda el mensaje del usuario entre comillas dobles y, si hubo un
+// adjunto, le antepone el detalle del archivo. Para mostrar usamos el texto real.
+function cleanUserText(text) {
+    let s = String(text || '').trim();
+    if (s.indexOf('Called the Read tool with the following input:') === 0) {
+        const marker = 'read successfully';
+        const mi = s.toLowerCase().lastIndexOf(marker);
+        if (mi >= 0) s = s.slice(mi + marker.length).trim();
+    }
+    if (s.length >= 2 && s[0] === '"' && s[s.length - 1] === '"') s = s.slice(1, -1).trim();
+    return s;
+}
+
+// Convierte el JSON de `opencode export` en mensajes con `parts` ordenadas.
+function normalizeExport(data) {
+    const out = [];
+    let lastAgent = '';
+    for (const m of (data.messages || [])) {
+        const info = m.info || {};
+        const role = info.role;
+        if (role !== 'user' && role !== 'assistant') continue;
+        const parts = [];
+        for (const p of (m.parts || [])) {
+            if (!p || typeof p !== 'object') continue;
+            if (p.type === 'text' && typeof p.text === 'string' && p.text !== '') {
+                parts.push({ type: 'text', text: role === 'user' ? cleanUserText(p.text) : p.text });
+            } else if (p.type === 'reasoning' && typeof p.text === 'string' && p.text !== '') {
+                parts.push({ type: 'reasoning', text: p.text });
+            } else if (p.type === 'tool') {
+                parts.push({ type: 'tool', tool: p.tool || '', callID: p.callID || '', state: p.state || {} });
+            } else if (p.type === 'file' && p.mime && p.url) {
+                parts.push({ type: 'file', mime: p.mime, url: p.url, filename: p.filename || '' });
+            }
+        }
+        if (!parts.length) continue;
+        if (role === 'user' && info.agent) lastAgent = info.agent;
+        const ts = info.time && info.time.created ? new Date(Number(info.time.created)).toISOString() : '';
+        out.push({
+            role,
+            ts,
+            oc_msg: info.id ? String(info.id) : '',
+            agent: role === 'assistant' ? (info.agent || lastAgent) : (info.agent || ''),
+            parts,
+        });
+    }
+    return out;
+}
+
+function modelIdOf(info) {
+    const mm = info && info.model;
+    if (mm && typeof mm === 'object') {
+        if (mm.providerID && mm.id) return mm.providerID + '/' + mm.id;
+        if (mm.id) return String(mm.id);
+    }
+    if (info && typeof info.modelID === 'string' && info.modelID) {
+        return (info.providerID ? info.providerID + '/' : '') + info.modelID;
+    }
+    return '';
+}
+
+async function exportSession(folder, oc) {
+    const dir = folder || (config.workspace ? path.resolve(config.workspace) : '');
+    const r = await runCli(['export', oc], { cwd: dir, timeout: 90000 });
+    if (!r.ok || !r.text) throw new Error('export fallo' + (r.killed ? ' (timeout)' : ''));
+    return JSON.parse(r.text);
+}
+
+// Comando de la web: devuelve el historial de una sesion (proxy, sin guardar).
+async function sessionHistory(cmd) {
+    const t = cmd._t || activeMode;
+    const oc = String((cmd.args && cmd.args[0]) || '').trim();
+    const folder = String((cmd.args && cmd.args[1]) || '').trim();
+    if (!/^ses_[A-Za-z0-9]{4,64}$/.test(oc)) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: 'opencode_session invalido' }, t);
+        return;
+    }
+    try {
+        const data = await exportSession(folder, oc);
+        const info = data.info || {};
+        const tk = info.tokens || {};
+        const payload = {
+            id: cmd.id,
+            opencode_session: oc,
+            title: String(info.title || ''),
+            directory: String(info.directory || folder || ''),
+            model: modelIdOf(info),
+            agent: String(info.agent || ''),
+            tokens: (tk.input || 0) + (tk.output || 0) + (tk.reasoning || 0),
+            cost: typeof info.cost === 'number' ? info.cost : 0,
+            messages: normalizeExport(data),
+        };
+        await api('history_ready', payload, t);
+        await api('command_done', { id: cmd.id, ok: true, error: '', text: JSON.stringify({ ready: true, count: payload.messages.length }) }, t);
+        log('session_history ' + oc + ' (' + payload.messages.length + ' mensajes)');
+    } catch (e) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: e.message }, t);
+        log('session_history ' + oc + ' error: ' + e.message);
+    }
+}
+
+// Indice liviano de sesiones del workspace (id, titulo, carpeta, updated).
+async function buildSessionIndex(target) {
+    const folders = forcedFolders(target);
+    const seen = new Set();
+    const sessions = [];
+    for (const folder of folders) {
+        let list = [];
+        try { list = await listSessionsInFolder(folder); } catch (e) { continue; }
+        for (const s of list) {
+            if (seen.has(s.id)) continue;
+            seen.add(s.id);
+            sessions.push({ id: s.id, title: s.title || '', folder, updated: s.updated || '' });
+        }
+    }
+    return sessions;
+}
+
+async function pushSessionIndex(target) {
+    const t = target || activeMode;
+    try {
+        const sessions = await buildSessionIndex(targetState(t));
+        await api('index_sync', { sessions: sessions }, t);
+        if (!(pushSessionIndex._silent)) log('indice de sesiones (' + t + '): ' + sessions.length);
+        return sessions.length;
+    } catch (e) {
+        log('aviso: no pude enviar el indice (' + t + '): ' + e.message);
+        return 0;
+    }
+}
+
 // Barrido: recorre carpetas (o una lista puntual), compara contra el estado
 // local y exporta/importa las sesiones nuevas o actualizadas. Escaneo completo
 // al arrancar y cada 6 h; los intermedios solo tocan carpetas con actividad.
@@ -1442,6 +1615,8 @@ async function syncSessions(opts) {
 // ese hosting no conoce. Incluye los chats web creados en el otro destino
 // (todos viven en opencode): así ambos lados terminan viendo lo mismo.
 async function sweepTarget(t, opts) {
+    // Modo proxy: el hub no guarda conversaciones; solo publicamos el indice.
+    if (config.proxyHistory !== false) return pushSessionIndex(t);
     // Si el hosting de t no soporta session_import (código viejo), no seguir
     // exportando al vacío: reintentamos dentro de un rato.
     if (Date.now() < (importBackoffUntil[t] || 0)) return 0;
@@ -2498,6 +2673,8 @@ async function handleCommand(cmd) {
     // Sincronizacion manual del historial (botones de la web).
     if (cmd.name === 'session_sync') { await sessionSyncOne(cmd); return; }
     if (cmd.name === 'session_sync_all') { await sessionSyncAll(cmd); return; }
+    // Historial por proxy: la web lo pide y el puente lo saca de opencode.
+    if (cmd.name === 'session_history') { await sessionHistory(cmd); return; }
     // Mapea el nombre "interno" al subcomando real de opencode.
     // Whitelist cerrada; cualquier nombre fuera de acá se rechaza.
     const MAP = {
@@ -2632,6 +2809,7 @@ async function tick(opts) {
                 user_id: m.id,
                 text: r.text,
                 reasoning: r.reasoning || '',
+                parts: r.parts || [],
                 opencode_session: r.opencodeSession || '',
                 oc_msg: r.assistantMsgID || '',
                 canceled: !!r.canceled,

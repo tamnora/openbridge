@@ -381,6 +381,185 @@ function bridge_can_claim_session($id, $sess) {
 }
 
 // ---------------------------------------------------------------------------
+// Indice de sesiones (proxy) y fetch efimero (historial): el hub no guarda
+// conversaciones; el puente manda metadatos y sirve el historial on demand.
+// ---------------------------------------------------------------------------
+function session_index_file($bridge = '') {
+    $id = bridge_valid_id($bridge) ? preg_replace('/[^A-Za-z0-9._-]/', '', $bridge) : '';
+    return $id === '' ? DATA_DIR . '/index.json' : DATA_DIR . '/index-' . $id . '.json';
+}
+function history_fetch_file($id) {
+    return DATA_DIR . '/fetch-' . (int)$id . '.json';
+}
+function session_index_sync($bridge, $sessions) {
+    $list = [];
+    foreach ((array)$sessions as $s) {
+        if (!is_array($s)) continue;
+        $id = trim((string)($s['id'] ?? ''));
+        if (!preg_match('/^ses_[A-Za-z0-9]{4,64}$/', $id)) continue;
+        $list[] = [
+            'id' => $id,
+            'title' => mb_substr((string)($s['title'] ?? ''), 0, 120),
+            'folder' => mb_substr((string)($s['folder'] ?? ''), 0, 500),
+            'updated' => (string)($s['updated'] ?? ''),
+        ];
+        if (count($list) >= 5000) break;
+    }
+    $fp = null;
+    json_read(session_index_file($bridge), $fp);
+    json_save(['sessions' => $list, 'ts' => gmdate('c')], $fp);
+    // Alta/actualizacion de las sesiones de opencode en el registro del hub
+    // (metadatos, sin historial) para que aparezcan en el sidebar.
+    $sdata = sessions_read($sfp);
+    foreach ($list as $it) {
+        $foundIdx = -1;
+        foreach ($sdata['sessions'] as $i => $s) {
+            if (!empty($s['opencode_session']) && (string)$s['opencode_session'] === $it['id']) { $foundIdx = $i; break; }
+        }
+        if ($foundIdx >= 0) {
+            $s = &$sdata['sessions'][$foundIdx];
+            if ($it['title'] !== '' && !session_name_placeholder($it['title'])) $s['name'] = $it['title'];
+            if ($it['folder'] !== '' && (string)($s['folder'] ?? '') !== $it['folder']) $s['folder'] = $it['folder'];
+            $s['importada'] = true;
+            if (bridge_valid_id($bridge) && session_bridge($s) === '') $s['bridge'] = $bridge;
+            unset($s);
+        } else {
+            $id = (int)$sdata['nextId'];
+            $sdata['nextId'] = $id + 1;
+            $sess = [
+                'id' => $id,
+                'name' => $it['title'] !== '' ? $it['title'] : ('Opencode ' . substr($it['id'], 0, 8)),
+                'folder' => $it['folder'],
+                'model' => '',
+                'agent' => 'build',
+                'created_ts' => gmdate('c'),
+                'last_ts' => gmdate('c'),
+                'opencode_session' => $it['id'],
+                'importada' => true,
+            ];
+            if (bridge_valid_id($bridge)) $sess['bridge'] = $bridge;
+            $sdata['sessions'][] = $sess;
+        }
+    }
+    sessions_save($sdata, $sfp);
+    return count($list);
+}
+function session_index_list($bridge) {
+    $fp = null;
+    $data = json_read(session_index_file($bridge), $fp);
+    if ($fp) json_done($fp);
+    return (is_array($data) && isset($data['sessions']) && is_array($data['sessions'])) ? $data['sessions'] : [];
+}
+function history_ready($id, $payload) {
+    $fp = null;
+    json_read(history_fetch_file($id), $fp);
+    json_save(is_array($payload) ? $payload : [], $fp);
+}
+function history_take($id) {
+    $file = history_fetch_file($id);
+    $fp = null;
+    $data = json_read($file, $fp);
+    if ($fp) json_done($fp);
+    @unlink($file);
+    return is_array($data) && $data ? $data : null;
+}
+
+// ---------------------------------------------------------------------------
+// Cola de salida (transitoria) e inflight (turno en curso). El hub no guarda
+// historial: la conversacion vive en opencode y se sirve por proxy.
+// ---------------------------------------------------------------------------
+function queue_file($bridge = '') {
+    $id = bridge_valid_id($bridge) ? preg_replace('/[^A-Za-z0-9._-]/', '', $bridge) : '';
+    return $id === '' ? DATA_DIR . '/queue.json' : DATA_DIR . '/queue-' . $id . '.json';
+}
+function inflight_file($bridge = '') {
+    $id = bridge_valid_id($bridge) ? preg_replace('/[^A-Za-z0-9._-]/', '', $bridge) : '';
+    return $id === '' ? DATA_DIR . '/inflight.json' : DATA_DIR . '/inflight-' . $id . '.json';
+}
+function queue_read($bridge) {
+    $fp = null;
+    $data = json_read(queue_file($bridge), $fp);
+    if ($fp) json_done($fp);
+    if (!is_array($data)) $data = [];
+    if (!isset($data['items']) || !is_array($data['items'])) $data['items'] = [];
+    if (!isset($data['nextId'])) $data['nextId'] = 1;
+    return $data;
+}
+function queue_save($bridge, $data) {
+    $fp = null;
+    json_read(queue_file($bridge), $fp);
+    json_save($data, $fp);
+}
+function queue_add($bridge, $item) {
+    $data = queue_read($bridge);
+    $id = (int)$data['nextId'];
+    $data['nextId'] = $id + 1;
+    $data['items'][] = array_merge(['id' => $id, 'status' => 'pending', 'ts' => gmdate('c')], is_array($item) ? $item : []);
+    if (count($data['items']) > 500) $data['items'] = array_slice($data['items'], -500);
+    queue_save($bridge, $data);
+    ob_wake();
+    return $id;
+}
+function queue_claim($bridge, $cutoffSeconds) {
+    $data = queue_read($bridge);
+    $out = [];
+    $keep = [];
+    $now = time();
+    foreach ($data['items'] as $it) {
+        $status = $it['status'] ?? '';
+        if (!empty($it['cancel_requested']) && $status === 'pending') continue;
+        $stale = $status === 'processing' && isset($it['ts']) && (strtotime($it['ts']) < ($now - (int)$cutoffSeconds));
+        if ($status === 'pending' || $stale) {
+            $it['status'] = 'processing';
+            $it['ts'] = gmdate('c');
+            $out[] = $it;
+        }
+        $keep[] = $it;
+    }
+    $data['items'] = $keep;
+    queue_save($bridge, $data);
+    return $out;
+}
+function queue_remove($bridge, $id) {
+    $data = queue_read($bridge);
+    $data['items'] = array_values(array_filter($data['items'], function ($it) use ($id) {
+        return (int)($it['id'] ?? 0) !== (int)$id;
+    }));
+    queue_save($bridge, $data);
+}
+function queue_cancel($bridge, $id) {
+    $data = queue_read($bridge);
+    foreach ($data['items'] as &$it) {
+        if ((int)($it['id'] ?? 0) === (int)$id) $it['cancel_requested'] = true;
+    }
+    unset($it);
+    queue_save($bridge, $data);
+}
+function queue_for_session($bridge, $sessionId) {
+    $data = queue_read($bridge);
+    $sid = (int)$sessionId;
+    $out = [];
+    foreach ($data['items'] as $it) {
+        if ((int)($it['session'] ?? 0) === $sid) $out[] = $it;
+    }
+    return $out;
+}
+function inflight_set($bridge, $payload) {
+    $fp = null;
+    json_read(inflight_file($bridge), $fp);
+    json_save(is_array($payload) ? $payload : [], $fp);
+}
+function inflight_get($bridge) {
+    $fp = null;
+    $data = json_read(inflight_file($bridge), $fp);
+    if ($fp) json_done($fp);
+    return is_array($data) && $data ? $data : null;
+}
+function inflight_clear($bridge) {
+    @unlink(inflight_file($bridge));
+}
+
+// ---------------------------------------------------------------------------
 // Sesiones (conversaciones).
 // ---------------------------------------------------------------------------
 function sessions_read(&$fp = null) {
@@ -527,6 +706,27 @@ function session_name_placeholder($name) {
 // falten; la clave de dedupe es rol|fecha|resumen de texto.
 // $bridge es el puente que importa (dueño de la sesión).
 // ---------------------------------------------------------------------------
+// Texto canonico para deduplicar mensajes importados de opencode. opencode
+// guarda el mensaje del usuario entre comillas dobles y, si hubo un adjunto, le
+// antepone el detalle del archivo ("Called the Read tool ..."). El hub guarda
+// solo el texto que tipeo el usuario, asi que normalizamos para que la
+// "adopcion" por texto lo reconozca y no lo duplique.
+function session_dedupe_text($role, $text) {
+    $s = trim((string)$text);
+    if ($role === 'user') {
+        $wrap = 'Called the Read tool with the following input:';
+        if (strpos($s, $wrap) === 0) {
+            $marker = 'read successfully';
+            $mi = strripos($s, $marker);
+            if ($mi !== false) $s = trim(substr($s, $mi + strlen($marker)));
+        }
+        if (strlen($s) >= 2 && $s[0] === '"' && substr($s, -1) === '"') {
+            $s = trim(substr($s, 1, -1));
+        }
+    }
+    return $s;
+}
+
 function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, $messages, $tokens = 0, $cost = 0.0, $bridge = '', $rename = false) {
     $ocSession = trim((string)$ocSession);
     if ($ocSession === '') {
@@ -614,13 +814,15 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
     $knownOc = [];
     $byText = [];
     foreach ($data['messages'] as $i => $m) {
-        $known[(string)($m['role'] ?? '') . '|' . (string)($m['ts'] ?? '') . '|' . md5(mb_substr((string)($m['text'] ?? ''), 0, 400))] = true;
+        $mRole = (string)($m['role'] ?? '');
+        $mText = session_dedupe_text($mRole, (string)($m['text'] ?? ''));
+        $known[$mRole . '|' . (string)($m['ts'] ?? '') . '|' . md5(mb_substr($mText, 0, 400))] = true;
         $oc = trim((string)($m['oc_msg'] ?? ''));
         if ($oc !== '') {
             $knownOc[$oc] = true;
         } else {
             // Candidato a "adopción": mensaje optimista de la web (sin id de opencode).
-            $byText[(string)($m['role'] ?? '') . '|' . md5(mb_substr(trim((string)($m['text'] ?? '')), 0, 400))] = $i;
+            $byText[$mRole . '|' . md5(mb_substr($mText, 0, 400))] = $i;
         }
     }
     $added = 0;
@@ -634,19 +836,39 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
         $ts = (string)($m['ts'] ?? '');
         if ($ts === '' || !@strtotime($ts)) $ts = gmdate('c');
         $ocMsg = trim((string)($m['oc_msg'] ?? ''));
+        $dtext = session_dedupe_text($role, $text);
         // Identidad de opencode: si ya está, es el mismo mensaje.
         if ($ocMsg !== '' && isset($knownOc[$ocMsg])) continue;
-        $key = $role . '|' . $ts . '|' . md5(mb_substr($text, 0, 400));
+        $key = $role . '|' . $ts . '|' . md5(mb_substr($dtext, 0, 400));
         if (isset($known[$key])) continue;
         // Adopción: llegó de opencode (con oc_msg) y existe uno de la web con
         // el mismo rol+texto y sin id. Se le asigna el id en vez de duplicar.
         if ($ocMsg !== '') {
-            $tk = $role . '|' . md5(mb_substr($text, 0, 400));
+            $tk = $role . '|' . md5(mb_substr($dtext, 0, 400));
             if (isset($byText[$tk])) {
                 $data['messages'][$byText[$tk]]['oc_msg'] = $ocMsg;
                 $knownOc[$ocMsg] = true;
                 $known[$key] = true;
                 unset($byText[$tk]);
+                continue;
+            }
+        }
+        // Respuesta del agente partida en varios mensajes de opencode (uno por
+        // paso/tool): el hub guarda la respuesta combinada. Si esta parte ya
+        // está contenida en un mensaje del agente, no duplicar.
+        if ($role === 'assistant' && mb_strlen($dtext) >= 40) {
+            $contained = false;
+            foreach ($data['messages'] as $em) {
+                if ((string)($em['role'] ?? '') !== 'assistant') continue;
+                $et = session_dedupe_text('assistant', (string)($em['text'] ?? ''));
+                if ($et !== '' && mb_strlen($et) > mb_strlen($dtext) && mb_strpos($et, $dtext) !== false) {
+                    $contained = true;
+                    break;
+                }
+            }
+            if ($contained) {
+                $known[$key] = true;
+                if ($ocMsg !== '') $knownOc[$ocMsg] = true;
                 continue;
             }
         }
@@ -1077,6 +1299,8 @@ function catalog_default() {
     return [
         'folders' => [],
         'models' => [],
+        'favorites' => [],
+        'default_model' => '',
         'models_full' => [],
         'models_ctx' => [],
         'vision' => [],
@@ -1270,7 +1494,7 @@ function sync_catalog($folders, $models, $workspace, $allowCreateFolder, $agents
     // preserva comandos y solicitudes en curso (y sus contadores).
     $ok = catalog_modify(function (&$cat) use ($fresh) {
         $keep = [];
-        foreach (['commands', 'requests', 'nextCommandId', 'nextRequestId'] as $k) {
+        foreach (['commands', 'requests', 'nextCommandId', 'nextRequestId', 'favorites', 'default_model'] as $k) {
             if (isset($cat[$k])) $keep[$k] = $cat[$k];
         }
         $cat = array_merge($fresh, $keep);
@@ -1281,6 +1505,24 @@ function sync_catalog($folders, $models, $workspace, $allowCreateFolder, $agents
 // Valida el nombre de una carpeta nueva (evita rutas y caracteres extraños).
 function valid_folder_name($name) {
     return is_string($name) && preg_match('/^[A-Za-z0-9][A-Za-z0-9 _\-.()]{1,49}$/', $name) === 1;
+}
+
+// Favoritos + modelo predeterminado (los gestiona la web desde el hub).
+function catalog_set_models($favorites, $defaultModel, $file = CATALOG_FILE) {
+    $favs = [];
+    foreach ((array)$favorites as $m) {
+        if (!is_string($m)) continue;
+        $m = trim($m);
+        if ($m === '') continue;
+        $favs[] = mb_substr($m, 0, 160);
+        if (count($favs) >= 400) break;
+    }
+    catalog_modify(function (&$cat) use ($favs, $defaultModel) {
+        $cat['favorites'] = $favs;
+        $def = trim((string)$defaultModel);
+        $cat['default_model'] = ($def !== '' && in_array($def, $favs, true)) ? $def : (count($favs) ? $favs[0] : '');
+    }, $file);
+    return true;
 }
 
 function catalog_add_request($name, $file = CATALOG_FILE) {
@@ -2031,26 +2273,13 @@ function prune_commands($cat, $keep = 60, $maxBytes = 2097152) {
 // más su propia cola de carpetas/comandos.
 function poll_peek_work($cutoff, $bridge = '') {
     $work = false;
-    $sdata = sessions_read($sfp);
-    foreach ($sdata['sessions'] as $sess) {
-        if ($work) break;
-        if (!bridge_can_claim_session($bridge, $sess)) continue;
-        $data = messages_read((int)$sess['id'], $mfp);
-        if (!is_array($data)) {
-            continue;
+    $q = queue_read($bridge);
+    foreach ($q['items'] as $it) {
+        if (($it['status'] ?? '') === 'pending'
+            || (($it['status'] ?? '') === 'processing' && strtotime($it['ts'] ?? '') < $cutoff)) {
+            return true;
         }
-        foreach ($data['messages'] as $msg) {
-            if ($msg['role'] !== 'user') continue;
-            if ($msg['status'] === 'pending'
-                || ($msg['status'] === 'processing' && strtotime($msg['ts']) < $cutoff)) {
-                $work = true;
-                break;
-            }
-        }
-        json_done($mfp);
     }
-    json_done($sfp);
-    if ($work) return true;
     $cat = catalog_read(bridge_catalog_file($bridge));
     if (!empty($cat['allow_create_folders'])) {
         foreach ((array)($cat['requests'] ?? []) as $r) {

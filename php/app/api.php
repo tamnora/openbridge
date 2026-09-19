@@ -235,6 +235,26 @@ if ($action === 'session_update') {
     json_response(['ok' => true, 'session' => $sdata['sessions'][$idx]]);
 }
 
+// Favoritos + modelo predeterminado del puente (solo admin).
+if ($action === 'models_update') {
+    $u = require_csrf();
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body)) $body = $_POST;
+    $bridge = isset($body['bridge']) && is_string($body['bridge']) && bridge_valid_id($body['bridge'])
+        ? $body['bridge'] : resolve_web_bridge();
+    if (!ob_bridge_visible($bridge, $u)) {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
+    }
+    if (($u['role'] ?? '') !== 'admin') {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
+    }
+    $file = bridge_catalog_file($bridge);
+    $favorites = isset($body['favorites']) && is_array($body['favorites']) ? $body['favorites'] : [];
+    catalog_set_models($favorites, (string)($body['default_model'] ?? ''), $file);
+    $cat = catalog_read($file);
+    json_response(['ok' => true, 'favorites' => $cat['favorites'] ?? [], 'default_model' => $cat['default_model'] ?? '']);
+}
+
 // ---------------------------------------------------------------------------
 // Mensajes (web, requiere login + CSRF para enviar).
 // ---------------------------------------------------------------------------
@@ -248,33 +268,22 @@ if ($action === 'history') {
     if (!ob_session_accessible($sess, ob_current_user())) {
         json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
     }
-    $data = messages_read($sid, $fp);
-    // Borradores huérfanos (el puente murió a mitad de la respuesta): se
-    // cierran para que este chat deje de mostrar "generando…" para siempre.
-    if (messages_heal_stale_streaming($data, time() - STALE_PROCESSING_SECONDS)) {
-        messages_save($data, $fp);
-    } else {
-        json_done($fp);
+    // El hub no guarda el historial: devuelve solo el estado en vivo (cola +
+    // inflight). La conversacion se pide a opencode por proxy.
+    $bridge = session_bridge($sess) !== '' ? session_bridge($sess) : resolve_web_bridge();
+    $queue = [];
+    foreach (queue_for_session($bridge, $sid) as $it) {
+        $queue[] = [
+            'id' => (int)($it['id'] ?? 0),
+            'text' => (string)($it['text'] ?? ''),
+            'img' => $it['img'] ?? null,
+            'status' => !empty($it['cancel_requested']) ? 'canceled' : (string)($it['status'] ?? 'pending'),
+            'ts' => (string)($it['ts'] ?? ''),
+        ];
     }
-    // Refresco incremental: ?since=<último id conocido>&ts=<ts del último visto>.
-    // Devuelve los nuevos + los que cambiaron de estado relevantes para la UI
-    // (borrador en streaming, respuesta recién finalizada).
-    $since = isset($_GET['since']) ? (int)$_GET['since'] : 0;
-    $sinceTs = isset($_GET['ts']) ? (string)$_GET['ts'] : '';
-    $msgs = $data['messages'];
-    if ($since > 0) {
-        $tsCut = $sinceTs !== '' ? @strtotime($sinceTs) : 0;
-        $out = [];
-        foreach ($msgs as $m) {
-            if ((int)$m['id'] > $since
-                || ($m['status'] ?? '') === 'streaming'
-                || (isset($m['answered_ts']) && $tsCut > 0 && @strtotime((string)$m['answered_ts']) > $tsCut)) {
-                $out[] = $m;
-            }
-        }
-        $msgs = $out;
-    }
-    json_response(['ok' => true, 'session' => $sess, 'messages' => $msgs]);
+    $inf = inflight_get($bridge);
+    $inflight = ($inf !== null && (int)($inf['session_id'] ?? 0) === $sid) ? $inf : null;
+    json_response(['ok' => true, 'session' => $sess, 'queue' => $queue, 'inflight' => $inflight]);
 }
 
 // ---------------------------------------------------------------------------
@@ -296,25 +305,18 @@ if ($action === 'cancel') {
     if (!ob_session_accessible($sess, $u)) {
         json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
     }
-    $data = messages_read($sid, $mfp);
+    $bridge = session_bridge($sess) !== '' ? session_bridge($sess) : resolve_web_bridge();
     $marked = 0;
-    foreach ($data['messages'] as &$msg) {
-        if ($msg['role'] !== 'user') continue;
-        if ($msg['status'] === 'pending') {
-            $msg['status'] = 'canceled';
-            $msg['canceled_ts'] = gmdate('c');
-            $marked++;
-        } elseif ($msg['status'] === 'processing' && empty($msg['cancel_requested'])) {
-            $msg['cancel_requested'] = true;
+    foreach (queue_for_session($bridge, $sid) as $it) {
+        $st = $it['status'] ?? '';
+        if ($st === 'pending' || $st === 'processing') {
+            queue_cancel($bridge, $it['id']);
             $marked++;
         }
     }
-    unset($msg);
     if (!$marked) {
-        json_done($mfp);
         json_response(['ok' => false, 'error' => 'No hay nada en curso para cancelar'], 400);
     }
-    messages_save($data, $mfp);
     json_response(['ok' => true, 'marked' => $marked]);
 }
 
@@ -329,18 +331,10 @@ if ($action === 'cancel_status') {
     if ($sid <= 0) {
         json_response(['ok' => false, 'error' => 'session_id requerido'], 400);
     }
-    $sess = get_session($sid);
-    if ($sess === null) {
-        json_response(['ok' => false, 'error' => 'Sesion no encontrada'], 404);
-    }
-    if (!bridge_can_claim_session(resolve_request_bridge(), $sess)) {
-        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
-    }
-    $data = messages_read($sid, $mfp);
-    json_done($mfp);
-    foreach ($data['messages'] as $msg) {
-        if ($msg['role'] === 'user' && !empty($msg['cancel_requested'])) {
-            json_response(['ok' => true, 'cancel' => true, 'user_id' => (int)$msg['id']]);
+    $bridge = resolve_request_bridge();
+    foreach (queue_for_session($bridge, $sid) as $it) {
+        if (!empty($it['cancel_requested'])) {
+            json_response(['ok' => true, 'cancel' => true, 'user_id' => (int)$it['id']]);
         }
     }
     json_response(['ok' => true, 'cancel' => false]);
@@ -377,11 +371,15 @@ if ($action === 'send') {
     if (mb_strlen($text) > 10000) {
         json_response(['ok' => false, 'error' => 'Mensaje demasiado largo'], 400);
     }
-    $extra = ['agent' => (string)($sess['agent'] ?? 'build'), 'author' => (string)$u['name']];
-    if ($img !== '') {
-        $extra['img'] = $img;
-    }
-    $id = add_message($sid, 'user', $text, 'pending', $extra);
+    // El hub no guarda el mensaje: va a la cola transitoria del puente.
+    $bridge = session_bridge($sess) !== '' ? session_bridge($sess) : resolve_web_bridge();
+    $id = queue_add($bridge, [
+        'session' => $sid,
+        'text' => $text,
+        'img' => $img !== '' ? $img : null,
+        'model' => (string)($sess['model'] ?? ''),
+        'agent' => (string)($sess['agent'] ?? 'build'),
+    ]);
     // Auto-título (estilo opencode): si el chat sigue con el nombre por defecto,
     // lo renombramos usando el primer prompt que escribió el usuario.
     if (session_has_default_name($sess)) {
@@ -518,6 +516,37 @@ if ($action === 'session_import') {
         json_response($res, 400);
     }
     json_response($res);
+}
+
+// Indice liviano de sesiones (proxy): el hub no guarda historial, solo metadatos.
+if ($action === 'index_sync') {
+    if (!check_bridge_token($_SERVER)) {
+        json_response(['ok' => false, 'error' => 'Token inválido'], 401);
+    }
+    $bridge = resolve_request_bridge();
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body)) {
+        json_response(['ok' => false, 'error' => 'Body inválido'], 400);
+    }
+    $count = session_index_sync($bridge, $body['sessions'] ?? []);
+    json_response(['ok' => true, 'count' => $count]);
+}
+
+// Resultado efimero de una lectura grande (historial): la web lo toma una vez.
+if ($action === 'history_ready') {
+    if (!check_bridge_token($_SERVER)) {
+        json_response(['ok' => false, 'error' => 'Token inválido'], 401);
+    }
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body)) {
+        json_response(['ok' => false, 'error' => 'Body inválido'], 400);
+    }
+    $id = (int)($body['id'] ?? 0);
+    if ($id <= 0) {
+        json_response(['ok' => false, 'error' => 'id inválido'], 400);
+    }
+    history_ready($id, $body);
+    json_response(['ok' => true]);
 }
 
 // Reconciliación de bajas: el puente informa qué sesiones ve y en qué carpetas
@@ -736,85 +765,36 @@ if ($action === 'poll') {
     $sdata = sessions_read($sfp);
     $claimed = [];
     $knownOc = [];
-    $sessChanged = false;
     if (!$lite) {
-        foreach ($sdata['sessions'] as &$sess) {
-            $sid = (int)$sess['id'];
-            if (!bridge_can_claim_session($bridge, $sess)) {
-                continue;
+        // El hub no guarda mensajes: la cola es la fuente de trabajo.
+        $items = queue_claim($bridge, STALE_PROCESSING_SECONDS);
+        foreach ($items as $it) {
+            $sid = (int)($it['session'] ?? 0);
+            $sess = null;
+            foreach ($sdata['sessions'] as $s) {
+                if ((int)$s['id'] === $sid) { $sess = $s; break; }
             }
-            $data = messages_read($sid, $mfp);
-            if ($data === null) {
-                continue;
-            }
-            $changed = false;
-            foreach ($data['messages'] as &$msg) {
-                if ($msg['role'] !== 'user') {
-                    continue;
-                }
-                $pending = $msg['status'] === 'pending';
-                $processing = $msg['status'] === 'processing' && (strtotime($msg['ts']) < $cutoff);
-                if ($pending || $processing) {
-                    if (!empty($msg['cancel_requested'])) {
-                        // Cancelado mientras esperaba: no se ejecuta nunca.
-                        $msg['status'] = 'canceled';
-                        $msg['canceled_ts'] = gmdate('c');
-                        unset($msg['cancel_requested']);
-                        $changed = true;
-                        continue;
-                    }
-                    $msg['status'] = 'processing';
-                    $msg['ts'] = gmdate('c');
-                    $changed = true;
-                    // Sesión legacy sin dueño que este puente puede correr
-                    // (tiene la carpeta): queda asignada a él.
-                    if ($bridge !== '' && session_bridge($sess) === '') {
-                        $sess['bridge'] = $bridge;
-                        $sessChanged = true;
-                    }
-                    $claimed[] = [
-                        'session_id' => $sid,
-                        'id' => (int)$msg['id'],
-                        'text' => $msg['text'],
-                        'img' => isset($msg['img']) ? (string)$msg['img'] : null,
-                        'opencode_session' => $sess['opencode_session'] ?? null,
-                        'session' => [
-                            'id' => $sid,
-                            'name' => $sess['name'],
-                            'folder' => $sess['folder'] ?? '',
-                            'model' => $sess['model'] ?? '',
-                            'agent' => $sess['agent'] ?? 'build',
-                        ],
-                    ];
-                }
-            }
-            unset($msg);
-            if ($changed) {
-                messages_save($data, $mfp);
-            } else {
-                json_done($mfp);
-            }
-        }
-        unset($sess);
-        if ($sessChanged) sessions_save($sdata, $sfp);
-        else json_done($sfp);
-        // Chats web creados acá y ya vinculados a opencode: el puente los salta
-        // al barrer (no duplicar). Solo cuenta los de este puente (dueño = su
-        // id) y los legacy sin dueño; los espejos importados de OTRO puente no.
-        // Los espejos importados NO cuentan: el barrido sí los re-importa, y
-        // así corrige carpeta/tokens si una pasada vieja los clasificó mal.
-        foreach ($sdata['sessions'] as $s) {
-            if (empty($s['opencode_session']) || !empty($s['importada'])) continue;
-            $owner = session_bridge($s);
-            if ($owner === '' || $owner === $bridge) {
-                $knownOc[] = (string)$s['opencode_session'];
-            }
+            if ($sess === null) continue;
+            $claimed[] = [
+                'session_id' => $sid,
+                'id' => (int)$it['id'],
+                'text' => (string)($it['text'] ?? ''),
+                'img' => isset($it['img']) && $it['img'] !== null ? (string)$it['img'] : null,
+                'opencode_session' => $sess['opencode_session'] ?? null,
+                'session' => [
+                    'id' => $sid,
+                    'name' => $sess['name'],
+                    'folder' => $sess['folder'] ?? '',
+                    'model' => ($it['model'] ?? '') !== '' ? $it['model'] : ($sess['model'] ?? ''),
+                    'agent' => ($it['agent'] ?? '') !== '' ? $it['agent'] : ($sess['agent'] ?? 'build'),
+                ],
+            ];
         }
         $foldersToCreate = $hasPendingReq ? catalog_claim_requests($file) : [];
     } else {
-        json_done($sfp);
         $foldersToCreate = [];
     }
+    json_done($sfp);
     $commands = $hasPendingCmd ? claim_commands($file) : [];
     json_response(['ok' => true, 'messages' => $claimed, 'folders' => $foldersToCreate, 'commands' => $commands, 'known_oc' => $knownOc]);
 }
@@ -919,6 +899,7 @@ if ($action === 'respond_partial') {
     $userId = (int)($body['user_id'] ?? 0);
     $text = trim((string)($body['text'] ?? ''));
     $reasoning = trim((string)($body['reasoning'] ?? ''));
+    $parts = (isset($body['parts']) && is_array($body['parts'])) ? $body['parts'] : [];
     $ocMsg = trim((string)($body['oc_msg'] ?? ''));
     if ($sid <= 0 || $userId <= 0) {
         json_response(['ok' => false, 'error' => 'session_id y user_id son obligatorios'], 400);
@@ -935,39 +916,22 @@ if ($action === 'respond_partial') {
     if (mb_strlen($text) > 50000 || mb_strlen($reasoning) > 50000) {
         json_response(['ok' => false, 'error' => 'Respuesta demasiado larga'], 400);
     }
-    if ($text === '' && $reasoning === '') {
+    if ($text === '' && $reasoning === '' && !$parts) {
         json_response(['ok' => false, 'error' => 'Nada para publicar'], 400);
     }
-    $data = messages_read($sid, $mfp);
-    $draftIdx = -1;
-    foreach ($data['messages'] as $i => $msg) {
-        if ($msg['role'] === 'assistant' && isset($msg['draft_for']) && (int)$msg['draft_for'] === $userId) {
-            $draftIdx = $i;
-            break;
-        }
-    }
-    if ($draftIdx >= 0) {
-        $data['messages'][$draftIdx]['text'] = $text;
-        if ($reasoning !== '') $data['messages'][$draftIdx]['reasoning'] = $reasoning;
-        if ($ocMsg !== '') $data['messages'][$draftIdx]['oc_msg'] = $ocMsg;
-        $data['messages'][$draftIdx]['ts'] = gmdate('c');
-    } else {
-        $aid = $data['nextId'];
-        $data['nextId'] = $aid + 1;
-        $draft = [
-            'id' => $aid,
-            'role' => 'assistant',
-            'text' => $text,
-            'ts' => gmdate('c'),
-            'status' => 'streaming',
-            'draft_for' => $userId,
-            'agent' => message_agent_of($data, $userId),
-        ];
-        if ($reasoning !== '') $draft['reasoning'] = $reasoning;
-        if ($ocMsg !== '') $draft['oc_msg'] = $ocMsg;
-        $data['messages'][] = $draft;
-    }
-    messages_save($data, $mfp);
+    // El hub no guarda el turno: lo deja en inflight (transitorio) para que la
+    // web lo vea en vivo; al terminar se limpia y manda opencode.
+    $bridge = resolve_request_bridge();
+    inflight_set($bridge, [
+        'session_id' => $sid,
+        'user_id' => $userId,
+        'text' => $text,
+        'reasoning' => $reasoning,
+        'parts' => $parts,
+        'oc_msg' => $ocMsg,
+        'status' => 'streaming',
+        'ts' => gmdate('c'),
+    ]);
     json_response(['ok' => true]);
 }
 
@@ -1008,8 +972,6 @@ if ($action === 'respond') {
         json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
     }
     $oc = isset($body['opencode_session']) ? trim((string)$body['opencode_session']) : '';
-    $reasoning = trim((string)($body['reasoning'] ?? ''));
-    $ocMsg = trim((string)($body['oc_msg'] ?? ''));
     $clearSession = !empty($body['clear_session']);
     if ($clearSession) {
         $sdata['sessions'][$sidIdx]['opencode_session'] = null;
@@ -1030,73 +992,13 @@ if ($action === 'respond') {
     $sdata['sessions'][$sidIdx]['last_ts'] = gmdate('c');
     sessions_save($sdata, $sfp);
 
-    $data = messages_read($sid, $mfp);
-    $found = false;
-    foreach ($data['messages'] as &$msg) {
-        if ((int)$msg['id'] === $userId) {
-            $msg['status'] = 'done';
-            $msg['answered_ts'] = gmdate('c');
-            unset($msg['cancel_requested']);
-            $found = true;
-            break;
-        }
-    }
-    unset($msg);
-    if (!$found) {
-        json_done($mfp);
-        json_response(['ok' => false, 'error' => 'Mensaje no encontrado'], 404);
-    }
-    // Si el puente publicó parciales, finalizamos ese borrador en vez de duplicar.
-    $draftIdx = -1;
-    foreach ($data['messages'] as $i => $msg) {
-        if ($msg['role'] === 'assistant' && isset($msg['draft_for']) && (int)$msg['draft_for'] === $userId) {
-            $draftIdx = $i;
-            break;
-        }
-    }
+    // El turno ya quedo en opencode: se limpia el inflight y la cola (el hub no
+    // guarda historial; la web lo lee por proxy).
     $canceled = !empty($body['canceled']);
-    if ($draftIdx >= 0) {
-        $aid = (int)$data['messages'][$draftIdx]['id'];
-        $data['messages'][$draftIdx]['text'] = $text;
-        $data['messages'][$draftIdx]['status'] = 'done';
-        $data['messages'][$draftIdx]['answered_ts'] = gmdate('c');
-        $data['messages'][$draftIdx]['ts'] = gmdate('c');
-        if ($reasoning !== '') {
-            $data['messages'][$draftIdx]['reasoning'] = $reasoning;
-        } else {
-            unset($data['messages'][$draftIdx]['reasoning']);
-        }
-        if ($ocMsg !== '') $data['messages'][$draftIdx]['oc_msg'] = $ocMsg;
-        if ($canceled) {
-            $data['messages'][$draftIdx]['canceled'] = true;
-        } else {
-            unset($data['messages'][$draftIdx]['canceled']);
-        }
-        if (empty($data['messages'][$draftIdx]['agent'])) {
-            $data['messages'][$draftIdx]['agent'] = message_agent_of($data, $userId, (string)($sdata['sessions'][$sidIdx]['agent'] ?? ''));
-        }
-        unset($data['messages'][$draftIdx]['draft_for']);
-    } else {
-        $aid = $data['nextId'];
-        $data['nextId'] = $aid + 1;
-        $newMsg = [
-            'id' => $aid,
-            'role' => 'assistant',
-            'text' => $text,
-            'ts' => gmdate('c'),
-            'status' => 'done',
-            'agent' => message_agent_of($data, $userId, (string)($sdata['sessions'][$sidIdx]['agent'] ?? '')),
-        ];
-        if ($reasoning !== '') $newMsg['reasoning'] = $reasoning;
-        if ($ocMsg !== '') $newMsg['oc_msg'] = $ocMsg;
-        if ($canceled) {
-            $newMsg['canceled'] = true;
-        }
-        $data['messages'][] = $newMsg;
-    }
-    messages_save($data, $mfp);
+    inflight_clear($reqBridge);
+    queue_remove($reqBridge, $userId);
     push_send_later(($canceled ? '⏹ ' : '') . 'IA respondió · ' . ($sdata['sessions'][$sidIdx]['name'] ?? 'chat'), mb_substr($text, 0, 200) . (mb_strlen($text) > 200 ? '.' : ''), 'chat.php?session=' . $sid, session_bridge($sdata['sessions'][$sidIdx]));
-    json_response(['ok' => true, 'id' => $aid]);
+    json_response(['ok' => true, 'id' => $userId]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1203,6 +1105,8 @@ $OC_ALLOWED = [
     // Sincronización manual del historial (botones de la web)
     'session_sync' => ['arg', 'path'],
     'session_sync_all' => [],
+    // Historial por proxy (la web no guarda conversaciones)
+    'session_history' => ['arg', 'path'],
 ];
 
 // Comandos que mutan algo (procesos, túneles, revertir, sync total): solo admin.
@@ -1280,6 +1184,22 @@ if ($action === 'oc_command_status') {
 if ($action === 'oc_sessions') {
     require_login_readonly();
     json_response(['ok' => true, 'sessions' => oc_sessions_list()]);
+}
+
+// Indice liviano de sesiones (proxy) del puente activo.
+if ($action === 'session_index') {
+    require_login_readonly();
+    json_response(['ok' => true, 'sessions' => session_index_list(resolve_web_bridge())]);
+}
+
+// Toma (y borra) el resultado efimero de un historial pedido por proxy.
+if ($action === 'history_take') {
+    require_login_readonly();
+    $id = (int)($_GET['id'] ?? 0);
+    if ($id <= 0) json_response(['ok' => false, 'error' => 'id inválido'], 400);
+    $data = history_take($id);
+    if ($data === null) json_response(['ok' => false, 'error' => 'sin datos'], 404);
+    json_response(['ok' => true, 'history' => $data]);
 }
 
 if ($action === 'oc_session_attach') {

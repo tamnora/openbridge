@@ -96,6 +96,10 @@ var els = {
     fAgent2: document.getElementById('fAgent2'),
     btnModelCancel: document.getElementById('btnModelCancel'),
     btnModelSave: document.getElementById('btnModelSave'),
+    mFavList: document.getElementById('mFavList'),
+    mFavCount: document.getElementById('mFavCount'),
+    mFavAdd: document.getElementById('mFavAdd'),
+    mFavSave: document.getElementById('mFavSave'),
     viewFiles: document.getElementById('viewFiles'),
     viewSessions: document.getElementById('viewSessions'),
     viewSearch: document.getElementById('viewSearch'),
@@ -162,6 +166,7 @@ var state = {
     features: {},         // capacidades del hub (p. ej. {pairing:true} en el hub PHP)
     isSending: false,
     pendingImage: null,
+    proxyCache: {},
     messages: [],
     procTimer: null,
     online: true,
@@ -2010,26 +2015,72 @@ function onMsgScroll() {
 // Huella por mensaje: si cambia (llegaron tramos, se canceló, etc.) se
 // reemplaza solo ese nodo; lo demás no se toca.
 function msgSig(m) {
+    var psig = '';
+    if (m.parts && m.parts.length) {
+        for (var i = 0; i < m.parts.length; i++) {
+            var p = m.parts[i] || {};
+            psig += (p.type === 'tool' ? ((p.state && p.state.status) || '') : (p.text || '').length) + ',';
+        }
+    }
     return (m.status || '') + '|' + (m.text || '').length + '|' + (m.reasoning || '').length
-        + '|' + (m.canceled ? 1 : 0) + '|' + (m.agent || '') + '|' + (m.author || '') + '|' + (m.img ? m.img.length : 0);
+        + '|' + psig + '|' + (m.canceled ? 1 : 0) + '|' + (m.agent || '') + '|' + (m.img ? m.img.length : 0);
+}
+
+function toolCardHtml(p, chatQuery) {
+    var st = p.state || {};
+    var status = String(st.status || '');
+    var title = String(st.title || '');
+    var input = st.input ? JSON.stringify(st.input, null, 1) : '';
+    var out = st.output != null ? String(st.output)
+        : (st.metadata && st.metadata.output != null ? String(st.metadata.output) : '');
+    var cls = 'toolcard' + (status === 'running' ? ' running' : (status === 'error' ? ' error' : ''));
+    return '<div class="' + cls + '" data-tool="' + esc(p.tool || '') + '">'
+        + '<div class="toolhead"><span class="toolspin"></span>'
+        + '<span class="toolname">' + esc(p.tool || 'tool') + '</span>'
+        + '<span class="tooltitle">' + esc(title) + '</span></div>'
+        + '<div class="toolbody">'
+        + (input ? '<pre class="toolinput">' + esc(input) + '</pre>' : '')
+        + (out ? '<pre class="tooloutput">' + esc(out.slice(0, 8000)) + '</pre>' : '')
+        + '</div></div>';
+}
+
+// Render tipo TUI: recorre las partes (texto, razonamiento, tool, imagen).
+function partsHtml(m, chatQuery) {
+    var out = '';
+    for (var i = 0; i < m.parts.length; i++) {
+        var p = m.parts[i] || {};
+        if (p.type === 'text') out += renderContent(p.text || '', chatQuery);
+        else if (p.type === 'reasoning') {
+            out += '<details class="reasoning"><summary>razonamiento</summary>'
+                + renderContent(p.text || '', chatQuery) + '</details>';
+        } else if (p.type === 'tool') out += toolCardHtml(p, chatQuery);
+        else if (p.type === 'file' && p.url) {
+            out += '<img class="msg-img" src="' + esc(p.url) + '" alt="' + esc(p.filename || 'adjunto') + '">';
+        }
+    }
+    return out;
 }
 
 function msgNodeHtml(m, chatQuery) {
     var cls = m.role === 'user' ? 'mine' : 'theirs';
     if (m.status === 'canceled') cls += ' canceled';
-    var who = m.role === 'user' ? '❯ ' + esc(m.author || 'vos') : '● Agente';
+    var who = m.role === 'user' ? '❯ usuario' : '● agente';
     if (m.agent === 'plan') cls += ' plan';
     var agentBadge = m.agent ? ' <span class="abadge ' + esc(m.agent) + '">' + esc(m.agent) + '</span>' : '';
     var stopBadge = m.canceled ? ' <span class="stopbadge">⏹ detenido</span>' : '';
     var streaming = m.role === 'assistant' && m.status === 'streaming';
     var hit = chatQuery && (m.text || '').toLowerCase().indexOf(chatQuery.toLowerCase()) >= 0;
+    var hasParts = !!(m.parts && m.parts.length);
+    var body = hasParts
+        ? partsHtml(m, chatQuery)
+        : ((m.img ? '<img class="msg-img" src="' + esc(m.img) + '" alt="imagen adjunta">' : '')
+            + reasoningHtml(m, chatQuery) + renderContent(m.text || '', chatQuery));
     return '<div class="msg ' + cls + (hit ? ' hit' : '') + '" data-mid="' + (m.id || '') + '" data-sig="' + esc(msgSig(m)) + '">'
         + '<div class="role"><span class="who">' + who + '</span>' + agentBadge + stopBadge
         + (streaming ? '<span class="genbadge">generando…</span>' : '')
         + '<span class="rmeta" title="' + esc(timeStr(m.ts)) + '">' + esc(timeOnly(m.ts)) + '</span>'
         + '<button type="button" class="copybtn" data-copy="msg" title="Copiar mensaje">⧉</button></div>'
-        + '<div class="body">' + (m.img ? '<img class="msg-img" src="' + esc(m.img) + '" alt="imagen adjunta">' : '')
-        + reasoningHtml(m, chatQuery) + renderContent(m.text || '', chatQuery)
+        + '<div class="body">' + body
         + (streaming ? '<span class="stream-cursor">▊</span>' : '')
         + '</div>'
         + '</div>';
@@ -2192,6 +2243,12 @@ function renderChat(session, messages) {
 
 // Copiar mensajes y bloques de código (delegado, sobrevive a los re-renders).
 els.messages.addEventListener('click', function (e) {
+    var head = e.target.closest('.toolcard .toolhead');
+    if (head) {
+        var card = head.parentNode;
+        if (card) card.classList.toggle('open');
+        return;
+    }
     var btn = e.target.closest('.copybtn');
     if (!btn) return;
     var kind = btn.getAttribute('data-copy');
@@ -2222,30 +2279,94 @@ if (els.jumpBtn) {
 
 // Refresco incremental: pide solo mensajes nuevos/cambiados (history?since=).
 // Con incremental=false (cambio de chat) trae el historial completo.
-async function loadHistory(sid, incremental) {
-    var url = 'api.php?action=history&session=' + sid;
-    var lastKnown = (!incremental || !state.messages.length) ? null
-        : state.messages[state.messages.length - 1];
-    if (lastKnown) {
-        url += '&since=' + lastKnown.id + '&ts=' + encodeURIComponent(lastKnown.ts || '');
+// Historial por proxy: pide a opencode (via puente) el historial real de una
+// sesion y lo toma del fetch efimero. Devuelve null si no se pudo.
+async function proxyHistory(sess) {
+    if (!sess || !sess.opencode_session) return null;
+    var enq = await api('api.php?action=run_oc', apiCsrf('POST', {
+        cmd: 'session_history', args: [sess.opencode_session, sess.folder || ''],
+    }));
+    if (!enq.ok) return null;
+    for (var i = 0; i < 40; i++) {
+        await sleepMs(i === 0 ? 150 : (i < 3 ? 400 : 1000));
+        var st = await api('api.php?action=oc_command_status&id=' + enq.id);
+        if (st.ok && st.status === 'error') return null;
+        if (st.ok && st.status === 'done') {
+            var take = await api('api.php?action=history_take&id=' + enq.id);
+            return (take.ok && take.history) ? take.history : null;
+        }
     }
-    var data = await api(url);
+    return null;
+}
+
+async function loadHistory(sid, incremental) {
+    var data = await api('api.php?action=history&session=' + sid);
     if (!data.ok) {
         toast('error al cargar el historial', 'error');
         return;
     }
-    var msgs = data.messages || [];
-    if (lastKnown) {
-        var byId = {};
-        for (var i = 0; i < state.messages.length; i++) byId[state.messages[i].id] = i;
-        for (var j = 0; j < msgs.length; j++) {
-            var u = msgs[j];
-            if (byId[u.id] !== undefined) state.messages[byId[u.id]] = u;
-            else { byId[u.id] = state.messages.length; state.messages.push(u); }
+    var sess = data.session;
+    var queue = Array.isArray(data.queue) ? data.queue : [];
+    var inflight = data.inflight || null;
+    var live = !!inflight || queue.some(function (it) { return it.status !== 'canceled'; });
+
+    // Base: la verdad de opencode (proxy). Se cachea y solo se refresca al
+    // abrir el chat, al terminar un turno en vivo, o con el boton sync.
+    var cache = state.proxyCache[sid] || null;
+    var needFetch = !cache || (!live && cache.wasLive);
+    if (sess && sess.opencode_session && needFetch) {
+        var hist = await proxyHistory(sess);
+        if (hist && hist.messages) {
+            var mapped = hist.messages.map(function (m, k) {
+                var parts = Array.isArray(m.parts) ? m.parts : [];
+                var txt = parts.filter(function (p) { return p.type === 'text'; })
+                    .map(function (p) { return p.text || ''; }).join('\n\n');
+                return { id: k + 1, role: m.role, ts: m.ts, oc_msg: m.oc_msg, agent: m.agent, parts: parts, text: txt };
+            });
+            cache = {
+                wasLive: live,
+                messages: mapped,
+                overlay: {
+                    name: hist.title || '',
+                    folder: hist.directory || '',
+                    model: hist.model || '',
+                    agent: hist.agent || '',
+                    tokens: hist.tokens || 0,
+                    cost: (typeof hist.cost === 'number' && hist.cost > 0) ? hist.cost : 0,
+                },
+            };
+            state.proxyCache[sid] = cache;
+        } else if (cache) {
+            cache.wasLive = false;
         }
-        msgs = state.messages;
+    } else if (cache && live) {
+        cache.wasLive = true;
     }
-    renderChat(data.session, msgs);
+    if (cache && cache.overlay) {
+        sess = Object.assign({}, sess, {
+            name: cache.overlay.name || sess.name,
+            folder: cache.overlay.folder || sess.folder,
+            model: cache.overlay.model || sess.model,
+            agent: cache.overlay.agent || sess.agent,
+            tokens: cache.overlay.tokens || sess.tokens,
+            cost: cache.overlay.cost || sess.cost,
+        });
+    }
+
+    // En vivo: cola (mensajes sin ejecutar/ejecutando) + inflight (streaming).
+    var msgs = cache ? cache.messages.slice() : [];
+    for (var q = 0; q < queue.length; q++) {
+        var it = queue[q];
+        msgs.push({ id: 'q' + it.id, role: 'user', text: it.text || '', img: it.img || undefined, status: it.status, ts: it.ts });
+    }
+    if (inflight) {
+        msgs.push({
+            id: 'inflight', role: 'assistant', status: 'streaming', ts: inflight.ts,
+            agent: (sess && sess.agent) || '', parts: inflight.parts || [],
+            text: inflight.text || '', reasoning: inflight.reasoning || '',
+        });
+    }
+    renderChat(sess, msgs);
 }
 
 function openChat(id) {
@@ -2453,7 +2574,8 @@ function selectHasValue(select, val) {
 function fillModelOptions(select, searchInput, current, onResult) {
     if (!select) return 0;
     var c = state.catalog || {};
-    var favs = Array.isArray(c.models) ? c.models.slice() : [];
+    var favs = Array.isArray(c.favorites) ? c.favorites.slice()
+        : (Array.isArray(c.models) ? c.models.slice() : []);
     var groups = (c.models_full && typeof c.models_full === 'object') ? c.models_full : {};
     var vision = Array.isArray(c.vision) ? c.vision : [];
     var q = searchInput ? String(searchInput.value || '').trim().toLowerCase() : '';
@@ -2512,7 +2634,8 @@ function fillSelects() {
         els.fFolder.appendChild(fo);
     }
 
-    var modelCount = fillModelOptions(els.fModel, els.fModelSearch, els.fModel.value, null);
+    var defModel = (state.catalog && state.catalog.default_model) || '';
+    var modelCount = fillModelOptions(els.fModel, els.fModelSearch, els.fModel.value || defModel, null);
     if (els.fModelSearch) {
         els.fModelSearch.oninput = function () {
             fillModelOptions(els.fModel, els.fModelSearch, els.fModel.value, null);
@@ -2697,6 +2820,62 @@ function fillModelModal(c) {
             if (els.fAgent2.options[y].value === cur.agent) { els.fAgent2.value = cur.agent; break; }
         }
     }
+    renderModelFavs();
+}
+
+// ---------------------------------------------------------------------------
+// Favoritos de modelos + predeterminado (se guardan en el hub, por puente)
+// ---------------------------------------------------------------------------
+function renderModelFavs() {
+    if (!els.mFavList) return;
+    var c = state.catalog || {};
+    if (!Array.isArray(state.modelFavs)) state.modelFavs = Array.isArray(c.favorites) ? c.favorites.slice() : [];
+    if (state.modelDefault === undefined) state.modelDefault = String(c.default_model || '');
+    if (!state.modelDefault && state.modelFavs.length) state.modelDefault = state.modelFavs[0];
+    els.mFavList.innerHTML = '';
+    if (!state.modelFavs.length) {
+        els.mFavList.innerHTML = '<span style="color:var(--muted);font-size:11.5px">(sin favoritos)</span>';
+    }
+    for (var i = 0; i < state.modelFavs.length; i++) {
+        (function (m) {
+            var chip = document.createElement('span');
+            chip.className = 'chip' + (m === state.modelDefault ? ' def' : '');
+            var def = document.createElement('button');
+            def.type = 'button';
+            def.title = 'predeterminado';
+            def.textContent = (m === state.modelDefault ? '★' : '☆');
+            def.addEventListener('click', function () { state.modelDefault = m; renderModelFavs(); });
+            var name = document.createElement('span');
+            name.textContent = m;
+            var rm = document.createElement('button');
+            rm.type = 'button';
+            rm.title = 'quitar';
+            rm.textContent = '×';
+            rm.addEventListener('click', function () {
+                state.modelFavs = state.modelFavs.filter(function (x) { return x !== m; });
+                if (state.modelDefault === m) state.modelDefault = state.modelFavs[0] || '';
+                renderModelFavs();
+            });
+            chip.appendChild(def); chip.appendChild(name); chip.appendChild(rm);
+            els.mFavList.appendChild(chip);
+        })(state.modelFavs[i]);
+    }
+    if (els.mFavCount) els.mFavCount.textContent = state.modelFavs.length ? '(' + state.modelFavs.length + ')' : '';
+}
+
+async function saveModelFavs() {
+    var data = await api('api.php?action=models_update', apiCsrf('POST', {
+        favorites: state.modelFavs || [], default_model: state.modelDefault || '',
+    }));
+    if (!data.ok) { toast(data.error || 'no se pudieron guardar', 'error'); return; }
+    if (state.catalog) {
+        state.catalog.favorites = data.favorites || [];
+        state.catalog.default_model = data.default_model || '';
+    }
+    state.modelFavs = (data.favorites || []).slice();
+    state.modelDefault = data.default_model || '';
+    renderModelFavs();
+    toast('favoritos guardados', 'ok');
 }
 
 function openModelModal() {
@@ -2732,6 +2911,16 @@ els.btnModelSave.addEventListener('click', async function () {
         toast(data.error || 'error al guardar', 'error');
     }
 });
+
+if (els.mFavAdd) els.mFavAdd.addEventListener('click', function () {
+    var m = els.fModel2.value;
+    if (!m) return;
+    if (!Array.isArray(state.modelFavs)) state.modelFavs = [];
+    if (state.modelFavs.indexOf(m) < 0) state.modelFavs.push(m);
+    if (!state.modelDefault) state.modelDefault = m;
+    renderModelFavs();
+});
+if (els.mFavSave) els.mFavSave.addEventListener('click', saveModelFavs);
 
 // ---------------------------------------------------------------------------
 // Cambiar agente del chat activo (Ctrl+. alterna plan ↔ build)
@@ -4024,19 +4213,17 @@ async function ocCommand(cmd, args, tries, gapMs) {
     return { ok: false, error: 'el puente tardó demasiado (¿está encendido?)' };
 }
 
-// Sync manual de la sesión abierta: fuerza al puente a reexportarla de opencode.
+// Sync manual de la sesión abierta: la re-trae de opencode (proxy).
 async function syncCurrentSession() {
     var s = state.currentSession;
     if (!s || !s.opencode_session) { toast('esta sesión no está vinculada a opencode', 'error'); return; }
     var btn = els.btnSync;
     if (btn) btn.disabled = true;
     toast('sincronizando sesión…', '');
-    var res = await ocCommand('session_sync', [s.opencode_session, s.folder || ''], 90, 1500);
+    state.proxyCache[state.currentId] = null;
+    await loadHistory(state.currentId, false);
     if (btn) btn.disabled = false;
-    if (!res.ok) { toast(res.error || 'no se pudo sincronizar', 'error'); return; }
-    var added = (res.data && res.data.added) || 0;
-    toast(added > 0 ? (added + ' mensaje(s) nuevo(s)') : 'la sesión ya estaba al día', 'ok');
-    loadHistory(state.currentId, false);
+    toast('sesión actualizada desde opencode', 'ok');
     loadSessions();
 }
 

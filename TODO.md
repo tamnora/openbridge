@@ -32,6 +32,12 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - Web: chat con streaming, adjuntar imagen, dictado por voz, plantillas de prompts,
   tokens/contexto y **costo**, archivos, **cambios** (git status/diff) con **revertir**,
   búsqueda global, sesiones de opencode y **autor** en cada mensaje.
+- Vista tipo TUI: los mensajes guardan sus `parts` (texto, razonamiento,
+  tarjetas de tool colapsables) y se ven en vivo. Proxy sin historial en el
+  hosting: el puente publica un indice liviano (`index_sync`) y la web pide el
+  historial a opencode on demand (`session_history`). Modelos: favoritos y
+  predeterminado por puente desde el hub (`models_update`). Sin autor por
+  mensaje (etiquetas fijas usuario/agente).
 - `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `AGENTS.md`, README, LICENSE, `.gitignore`.
 
 ---

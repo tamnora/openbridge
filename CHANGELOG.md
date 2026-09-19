@@ -4,6 +4,37 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- Vista tipo TUI: las respuestas del agente se guardan y muestran con sus
+  `parts` (texto, razonamiento y tarjetas de tool colapsables con animacion),
+  en vivo durante la ejecucion.
+- Proxy sin historial en el hosting: el puente publica un indice liviano de
+  sesiones (`index_sync`) y la web pide el historial a opencode on demand
+  (`session_history` + fetch efimero que se borra al consumir). El hub ya no
+  guarda conversaciones: los mensajes salientes van a una cola transitoria
+  (`queue-<puente>.json`) y el turno en curso a `inflight-<puente>.json`, que se
+  limpian al terminar. La web compone historial (proxy) + cola + inflight.
+- Gestion de modelos desde el hub: favoritos y modelo predeterminado por puente
+  (`models_update`), con lista agrupada por proveedor.
+- Se elimino el autor por mensaje; las etiquetas son fijas (usuario/agente).
+
+### Cambiado
+
+- El titulo de la sesion lo manda opencode (el nombre elegido en la web se pasa
+  como `--title` en el primer `run`); el hub lo espeja.
+- `/new` arranca un chat limpio, como en opencode.
+- El puente captura `part.messageID` (antes leia `ev.messageID` y nunca
+  publicaba el id del mensaje del agente).
+
+### Corregido
+
+- Importacion de sesiones de opencode: se normaliza el texto (comillas y
+  preludio de adjunto) para que la adopcion no duplique los mensajes del usuario,
+  y no se duplica la respuesta partida en pasos/tools.
+
 ## [0.9.0] - 2026-09-18
 
 

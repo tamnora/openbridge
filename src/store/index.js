@@ -149,6 +149,24 @@ async function deleteSession(id) {
     try { await fs.unlink(paths.messagesFile(id)); } catch (e) { /* no estaba */ }
 }
 
+// Texto canonico para deduplicar mensajes importados de opencode. opencode
+// guarda el mensaje del usuario entre comillas dobles y, si hubo un adjunto, le
+// antepone el detalle del archivo ("Called the Read tool ..."). El hub guarda
+// solo el texto que tipeo el usuario, asi que normalizamos para que la
+// "adopcion" por texto lo reconozca y no lo duplique.
+function sessionDedupeText(role, text) {
+    let s = String(text == null ? '' : text).trim();
+    if (role === 'user') {
+        if (s.indexOf('Called the Read tool with the following input:') === 0) {
+            const marker = 'read successfully';
+            const mi = s.toLowerCase().lastIndexOf(marker);
+            if (mi >= 0) s = s.slice(mi + marker.length).trim();
+        }
+        if (s.length >= 2 && s[0] === '"' && s[s.length - 1] === '"') s = s.slice(1, -1).trim();
+    }
+    return s;
+}
+
 // Importa (merge idempotente) una sesion de opencode. Mismo esquema que PHP.
 async function sessionImport(ocSession, name, folder, model, agent, updatedTs, messages, tokens = 0, cost = 0, bridge = '', rename = false) {
     const oc = String(ocSession || '').trim();
@@ -212,10 +230,12 @@ async function sessionImport(ocSession, name, folder, model, agent, updatedTs, m
         const knownOc = {};
         const byText = {};
         data.messages.forEach((m, i) => {
-            known[String(m.role || '') + '|' + String(m.ts || '') + '|' + md5(mbSubstr(m.text || '', 0, 400))] = true;
+            const role = String(m.role || '');
+            const dtext = sessionDedupeText(role, m.text || '');
+            known[role + '|' + String(m.ts || '') + '|' + md5(mbSubstr(dtext, 0, 400))] = true;
             const ocId = String(m.oc_msg || '').trim();
             if (ocId !== '') knownOc[ocId] = true;
-            else byText[String(m.role || '') + '|' + md5(mbSubstr(String(m.text || '').trim(), 0, 400))] = i;
+            else byText[role + '|' + md5(mbSubstr(dtext, 0, 400))] = i;
         });
         for (const m of (Array.isArray(messages) ? messages : [])) {
             if (!m || typeof m !== 'object') continue;
@@ -227,19 +247,35 @@ async function sessionImport(ocSession, name, folder, model, agent, updatedTs, m
             let ts = String(m.ts || '');
             if (ts === '' || isNaN(Date.parse(ts))) ts = nowIso();
             const ocMsg = String(m.oc_msg || '').trim();
+            const dtext = sessionDedupeText(role, text);
             // Identidad de opencode: si ya esta, es el mismo mensaje.
             if (ocMsg !== '' && knownOc[ocMsg]) continue;
-            const key = role + '|' + ts + '|' + md5(mbSubstr(text, 0, 400));
+            const key = role + '|' + ts + '|' + md5(mbSubstr(dtext, 0, 400));
             if (known[key]) continue;
             // Adopcion: llego de opencode (con oc_msg) y existe uno de la web
             // con el mismo rol+texto y sin id. Se le asigna el id.
             if (ocMsg !== '') {
-                const tk = role + '|' + md5(mbSubstr(text, 0, 400));
+                const tk = role + '|' + md5(mbSubstr(dtext, 0, 400));
                 if (byText[tk] !== undefined) {
                     data.messages[byText[tk]].oc_msg = ocMsg;
                     knownOc[ocMsg] = true;
                     known[key] = true;
                     delete byText[tk];
+                    continue;
+                }
+            }
+            // Respuesta del agente partida en varios mensajes de opencode (uno
+            // por paso/tool): el hub guarda la respuesta combinada. Si esta
+            // parte ya esta contenida en un mensaje del agente, no duplicar.
+            if (role === 'assistant' && dtext.length >= 40) {
+                const contained = data.messages.some((e) => {
+                    if (e.role !== 'assistant') return false;
+                    const et = sessionDedupeText('assistant', e.text);
+                    return et.length > dtext.length && et.indexOf(dtext) >= 0;
+                });
+                if (contained) {
+                    known[key] = true;
+                    if (ocMsg !== '') knownOc[ocMsg] = true;
                     continue;
                 }
             }
@@ -376,6 +412,8 @@ function catalogDefault() {
     return {
         folders: [],
         models: [],
+        favorites: [],
+        default_model: '',
         models_full: {},
         models_ctx: {},
         vision: [],
@@ -423,7 +461,7 @@ async function syncCatalog(folders, models, workspace, allowCreateFolder, agents
     fresh.synced_ts = nowIso();
     await catalogModify(file, (cat) => {
         const keep = {};
-        for (const k of ['commands', 'requests', 'nextCommandId', 'nextRequestId']) {
+        for (const k of ['commands', 'requests', 'nextCommandId', 'nextRequestId', 'favorites', 'default_model']) {
             if (cat[k] !== undefined) keep[k] = cat[k];
         }
         for (const k of Object.keys(cat)) delete cat[k];
@@ -433,6 +471,19 @@ async function syncCatalog(folders, models, workspace, allowCreateFolder, agents
 }
 function validFolderName(name) {
     return typeof name === 'string' && /^[A-Za-z0-9][A-Za-z0-9 _\-.()]{1,49}$/.test(name);
+}
+// Favoritos + modelo predeterminado (los gestiona la web desde el hub).
+async function catalogSetModels(favorites, defaultModel, file) {
+    const favs = (Array.isArray(favorites) ? favorites : [])
+        .filter((m) => typeof m === 'string' && m.trim() !== '')
+        .map((m) => mbSubstr(m.trim(), 0, 160))
+        .slice(0, 400);
+    await catalogModify(file, (cat) => {
+        cat.favorites = favs;
+        const def = String(defaultModel || '').trim();
+        cat.default_model = (def !== '' && favs.includes(def)) ? def : (favs[0] || '');
+    });
+    return true;
 }
 async function catalogAddRequest(name, file) {
     let id = 0;
@@ -753,17 +804,10 @@ async function finishCommand(id, ok, text, error, file) {
     return found;
 }
 async function pollPeekWork(cutoff, bridge) {
-    const sdata = await sessionsRead();
-    for (const sess of sdata.sessions) {
-        if (!(await bridgeCanClaimSession(bridge, sess))) continue;
-        const data = await messagesRead(sess.id);
-        for (const msg of (data.messages || [])) {
-            if (msg.role !== 'user') continue;
-            if (msg.status === 'pending' || (msg.status === 'processing' && Date.parse(msg.ts || 0) < cutoff)) {
-                return true;
-            }
-        }
-    }
+    const data = await jsonfile.readJson(paths.queueFile(bridge), { items: [] });
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (items.some((it) => it.status === 'pending'
+        || (it.status === 'processing' && Date.parse(it.ts || 0) < cutoff))) return true;
     const cat = await catalogRead(paths.bridgeCatalogFile(bridge));
     if (cat.allow_create_folders && (cat.requests || []).some((r) => r.status === 'pending')) return true;
     if ((cat.commands || []).some((c) => c.status === 'pending')) return true;
@@ -969,6 +1013,129 @@ async function purgeTmpData() {
     try { return await jsonfile.purgeTmpDir(paths.dataDir()); } catch (e) { return 0; }
 }
 
+// ---------------------------------------------------------------------------
+// Indice de sesiones (proxy): metadatos que manda el puente, sin historial.
+// ---------------------------------------------------------------------------
+async function sessionIndexSync(bridge, sessions) {
+    const list = (Array.isArray(sessions) ? sessions : [])
+        .filter((s) => s && typeof s === 'object' && /^ses_[A-Za-z0-9]{4,64}$/.test(String(s.id || '')))
+        .map((s) => ({
+            id: String(s.id),
+            title: mbSubstr(String(s.title || ''), 0, 120),
+            folder: mbSubstr(String(s.folder || ''), 0, 500),
+            updated: String(s.updated || ''),
+        }))
+        .slice(0, 5000);
+    await jsonfile.writeAtomic(paths.sessionIndexFile(bridge), { sessions: list, ts: nowIso() });
+    // Alta/actualizacion de las sesiones de opencode en el registro del hub
+    // (metadatos, sin historial) para que aparezcan en el sidebar.
+    await sessionsUpdate((sdata) => {
+        for (const it of list) {
+            const found = sdata.sessions.find((s) => s.opencode_session && String(s.opencode_session) === it.id);
+            if (found) {
+                if (it.title && !sessionNamePlaceholder(it.title)) found.name = it.title;
+                if (it.folder && String(found.folder || '') !== it.folder) found.folder = it.folder;
+                found.importada = true;
+                if (bridgeValidId(bridge) && sessionBridge(found) === '') found.bridge = bridge;
+            } else {
+                const id = sdata.nextId;
+                sdata.nextId = id + 1;
+                const sess = {
+                    id,
+                    name: it.title || ('Opencode ' + it.id.slice(0, 8)),
+                    folder: it.folder,
+                    model: '',
+                    agent: 'build',
+                    created_ts: nowIso(),
+                    last_ts: nowIso(),
+                    opencode_session: it.id,
+                    importada: true,
+                };
+                if (bridgeValidId(bridge)) sess.bridge = bridge;
+                sdata.sessions.push(sess);
+            }
+        }
+    });
+    return list.length;
+}
+async function sessionIndexList(bridge) {
+    const data = await jsonfile.readJson(paths.sessionIndexFile(bridge), { sessions: [] });
+    return Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+// Resultado efimero de una lectura grande (historial): la web lo toma una vez.
+async function historyReady(id, payload) {
+    await jsonfile.writeAtomic(paths.fetchFile(id), payload && typeof payload === 'object' ? payload : {});
+}
+async function historyTake(id) {
+    const file = paths.fetchFile(id);
+    const data = await jsonfile.readJson(file, null);
+    try { await fs.unlink(file); } catch (e) { /* no estaba */ }
+    return data;
+}
+
+// ---------------------------------------------------------------------------
+// Cola de salida (transitoria) e inflight (turno en curso). El hub no guarda
+// historial: la conversacion vive en opencode y se sirve por proxy.
+// ---------------------------------------------------------------------------
+async function queueAdd(bridge, item) {
+    let id = 0;
+    await jsonfile.update(paths.queueFile(bridge), { items: [], nextId: 1 }, (data) => {
+        if (!Array.isArray(data.items)) data.items = [];
+        id = data.nextId || 1;
+        data.nextId = id + 1;
+        data.items.push(Object.assign({ id, status: 'pending', ts: nowIso() }, item || {}));
+        if (data.items.length > 500) data.items = data.items.slice(-500);
+    });
+    return id;
+}
+async function queueClaim(bridge, cutoffMs) {
+    const out = [];
+    await jsonfile.update(paths.queueFile(bridge), { items: [], nextId: 1 }, (data) => {
+        if (!Array.isArray(data.items)) return;
+        const now = Date.now();
+        const keep = [];
+        for (const it of data.items) {
+            if (it.cancel_requested && it.status === 'pending') continue; // cancelado antes de arrancar
+            const stale = it.status === 'processing' && it.ts && (now - Date.parse(it.ts) > (cutoffMs || 0));
+            if (it.status === 'pending' || stale) {
+                it.status = 'processing';
+                it.ts = nowIso();
+                out.push(it);
+            }
+            keep.push(it);
+        }
+        data.items = keep;
+    });
+    return out;
+}
+async function queueRemove(bridge, id) {
+    await jsonfile.update(paths.queueFile(bridge), { items: [], nextId: 1 }, (data) => {
+        if (Array.isArray(data.items)) data.items = data.items.filter((it) => parseInt(it.id, 10) !== parseInt(id, 10));
+    });
+}
+async function queueCancel(bridge, id) {
+    await jsonfile.update(paths.queueFile(bridge), { items: [], nextId: 1 }, (data) => {
+        if (!Array.isArray(data.items)) return;
+        for (const it of data.items) if (parseInt(it.id, 10) === parseInt(id, 10)) it.cancel_requested = true;
+    });
+}
+async function queueForSession(bridge, sessionId) {
+    const data = await jsonfile.readJson(paths.queueFile(bridge), { items: [] });
+    const sid = parseInt(sessionId, 10);
+    return (Array.isArray(data.items) ? data.items : []).filter((it) => parseInt(it.session, 10) === sid);
+}
+async function inflightSet(bridge, payload) {
+    await jsonfile.writeAtomic(paths.inflightFile(bridge), payload && typeof payload === 'object' ? payload : {});
+}
+async function inflightGet(bridge) {
+    const data = await jsonfile.readJson(paths.inflightFile(bridge), null);
+    return data && typeof data === 'object' ? data : null;
+}
+async function inflightClear(bridge) {
+    try { await fs.unlink(paths.inflightFile(bridge)); } catch (e) { /* no estaba */ }
+}
+
 module.exports = {
     STALE_PROCESSING_SECONDS,
     nowIso, md5, mbSubstr, normFolder,
@@ -980,7 +1147,7 @@ module.exports = {
     messagesRead, messagesUpdate, messagesHealStaleStreaming, addMessage, messageAgentOf,
     // catalogo
     catalogDefault, catalogRead, catalogModify, catalogVersion, syncCatalog,
-    validFolderName, catalogAddRequest, catalogClaimRequests, catalogFinishRequest,
+    validFolderName, catalogSetModels, catalogAddRequest, catalogClaimRequests, catalogFinishRequest,
     folderPathInCatalog, modelInCatalog, agentInCatalog, catalogWorkspaceRoot,
     modelContext, modelContextObj,
     // puentes
@@ -993,5 +1160,8 @@ module.exports = {
     safeJoinWorkspace, readTextFile, fileTooBig, fmtSize, workspaceList, workspaceListEntries,
     // busqueda / temas / opencode
     searchIndexBuild, themesIndex, themesKnown, ocSessionsList,
+    sessionIndexSync, sessionIndexList, historyReady, historyTake,
+    queueAdd, queueClaim, queueRemove, queueCancel, queueForSession,
+    inflightSet, inflightGet, inflightClear,
     purgeTmpData,
 };

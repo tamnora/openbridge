@@ -101,3 +101,75 @@ test('sessionReconcile: borra huerfanos del puente solo en carpetas escaneadas',
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('sessionImport: adopta el mensaje del usuario que opencode guarda entre comillas', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-store-'));
+    paths.setBase(dir);
+    paths.ensureDirs();
+    try {
+        const r = await store.sessionImport('ses_q1', 'Chat', 'C:/proj', '', 'build', '', [], 0, 0, 'pc1');
+        const sid = r.session_id;
+        // Mensaje original de la web (sin comillas, con autor).
+        await store.addMessage(sid, 'user', 'hola mundo', 'pending', { author: 'admin' });
+        // opencode lo registra envuelto en comillas dobles.
+        const r2 = await store.sessionImport('ses_q1', 'Chat', 'C:/proj', '', 'build', '', [
+            { role: 'user', text: '"hola mundo"', ts: '2026-01-01T00:00:10Z', oc_msg: 'msg_u1' },
+        ], 0, 0, 'pc1');
+        assert.equal(r2.added, 0);
+        const data = await store.messagesRead(sid);
+        const users = data.messages.filter((m) => m.role === 'user');
+        assert.equal(users.length, 1);
+        assert.equal(users[0].oc_msg, 'msg_u1');
+    } finally {
+        paths.setBase('');
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('sessionImport: adopta el mensaje con adjunto (preludio de opencode)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-store-'));
+    paths.setBase(dir);
+    paths.ensureDirs();
+    try {
+        const r = await store.sessionImport('ses_q2', 'Chat', 'C:/proj', '', 'build', '', [], 0, 0, 'pc1');
+        const sid = r.session_id;
+        await store.addMessage(sid, 'user', 'mira esto', 'pending', { author: 'admin' });
+        const wrapped = 'Called the Read tool with the following input: {"filePath":"C:\\\\tmp\\\\x.png"}'
+            + '\n\nImage read successfully\n\n"mira esto"';
+        const r2 = await store.sessionImport('ses_q2', 'Chat', 'C:/proj', '', 'build', '', [
+            { role: 'user', text: wrapped, ts: '2026-01-01T00:00:20Z', oc_msg: 'msg_u2' },
+        ], 0, 0, 'pc1');
+        assert.equal(r2.added, 0);
+        const users = (await store.messagesRead(sid)).messages.filter((m) => m.role === 'user');
+        assert.equal(users.length, 1);
+        assert.equal(users[0].oc_msg, 'msg_u2');
+    } finally {
+        paths.setBase('');
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('sessionImport: no duplica la respuesta del agente partida en pasos', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-store-'));
+    paths.setBase(dir);
+    paths.ensureDirs();
+    try {
+        const r = await store.sessionImport('ses_q3', 'Chat', 'C:/proj', '', 'build', '', [], 0, 0, 'pc1');
+        const sid = r.session_id;
+        const parte1 = 'Primera parte de la respuesta del agente con texto suficiente.';
+        const parte2 = 'Segunda parte de la respuesta del agente, tambien con texto suficiente.';
+        // El hub guarda la respuesta combinada que publica el puente.
+        await store.addMessage(sid, 'assistant', parte1 + '\n\n' + parte2, 'done', {});
+        // opencode exporta cada paso como un mensaje assistant distinto.
+        const r2 = await store.sessionImport('ses_q3', 'Chat', 'C:/proj', '', 'build', '', [
+            { role: 'assistant', text: parte1, ts: '2026-01-01T00:01:00Z', oc_msg: 'msg_a1' },
+            { role: 'assistant', text: parte2, ts: '2026-01-01T00:01:01Z', oc_msg: 'msg_a2' },
+        ], 0, 0, 'pc1');
+        assert.equal(r2.added, 0);
+        const assistants = (await store.messagesRead(sid)).messages.filter((m) => m.role === 'assistant');
+        assert.equal(assistants.length, 1);
+    } finally {
+        paths.setBase('');
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

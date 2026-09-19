@@ -215,6 +215,7 @@ const OC_ALLOWED = {
     port_free: ['arg'],
     session_sync: ['arg', 'path'],
     session_sync_all: [],
+    session_history: ['arg', 'path'],
 };
 
 function ocArgValido(tipo, valor) {
@@ -323,40 +324,48 @@ async function handleApi(ctx) {
             });
             return ok({ ok: true, session: updated });
         }
+        case 'models_update': {
+            const s = auth.requireCsrf(app, req, res);
+            if (!s) return;
+            if (s.role !== 'admin') return ok({ ok: false, error: 'Permiso insuficiente' }, 403);
+            const bridge = bodyBridge(req, query, body) || await webBridge(req, query);
+            const file = paths.bridgeCatalogFile(bridge);
+            const favorites = Array.isArray(body.favorites) ? body.favorites : [];
+            await store.catalogSetModels(favorites, body.default_model, file);
+            const cat = await store.catalogRead(file);
+            return ok({ ok: true, favorites: cat.favorites || [], default_model: cat.default_model || '' });
+        }
         case 'history': {
             if (!auth.requireLogin(app, req, res)) return;
             const sid = parseInt(query.get('session') || '0', 10) || 0;
             const sess = sid > 0 ? await store.getSession(sid) : null;
             if (!sess) return ok({ ok: false, error: 'Sesion no encontrada' }, 404);
-            const data = await store.messagesRead(sid);
-            if (store.messagesHealStaleStreaming(data, Date.now() - store.STALE_PROCESSING_SECONDS * 1000)) {
-                await jsonfile.writeAtomic(paths.messagesFile(sid), data);
-            }
-            const since = parseInt(query.get('since') || '0', 10) || 0;
-            const sinceTs = String(query.get('ts') || '');
-            let msgs = data.messages;
-            if (since > 0) {
-                const tsCut = sinceTs ? Date.parse(sinceTs) : 0;
-                msgs = msgs.filter((m) => parseInt(m.id, 10) > since
-                    || m.status === 'streaming'
-                    || (m.answered_ts && tsCut > 0 && Date.parse(m.answered_ts) > tsCut));
-            }
-            return ok({ ok: true, session: sess, messages: msgs });
+            // El hub no guarda el historial: devuelve solo el estado en vivo
+            // (cola + inflight). La conversacion se pide a opencode por proxy.
+            const bridge = store.sessionBridge(sess) || await webBridge(req, query);
+            const queue = (await store.queueForSession(bridge, sid)).map((it) => ({
+                id: parseInt(it.id, 10),
+                text: it.text || '',
+                img: it.img || null,
+                status: it.cancel_requested ? 'canceled' : (it.status || 'pending'),
+                ts: it.ts || '',
+            }));
+            const inf = await store.inflightGet(bridge);
+            const inflight = (inf && parseInt(inf.session_id, 10) === sid) ? inf : null;
+            return ok({ ok: true, session: sess, queue, inflight });
         }
         case 'cancel': {
             if (!auth.requireLogin(app, req, res)) return;
             if (!auth.requireCsrf(app, req, res)) return;
             const sid = parseInt(body.session, 10) || 0;
-            if (sid <= 0 || !(await store.getSession(sid))) return ok({ ok: false, error: 'Sesion no encontrada' }, 404);
+            const sess = sid > 0 ? await store.getSession(sid) : null;
+            if (!sess) return ok({ ok: false, error: 'Sesion no encontrada' }, 404);
+            const bridge = store.sessionBridge(sess) || await webBridge(req, query);
+            const items = await store.queueForSession(bridge, sid);
             let marked = 0;
-            await store.messagesUpdate(sid, (data) => {
-                for (const msg of data.messages) {
-                    if (msg.role !== 'user') continue;
-                    if (msg.status === 'pending') { msg.status = 'canceled'; msg.canceled_ts = store.nowIso(); marked++; }
-                    else if (msg.status === 'processing' && !msg.cancel_requested) { msg.cancel_requested = true; marked++; }
-                }
-                if (!marked) return false;
-            });
+            for (const it of items) {
+                if (it.status === 'pending' || it.status === 'processing') { await store.queueCancel(bridge, it.id); marked++; }
+            }
             if (!marked) return ok({ ok: false, error: 'No hay nada en curso para cancelar' }, 400);
             return ok({ ok: true, marked });
         }
@@ -364,11 +373,10 @@ async function handleApi(ctx) {
             if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
             const sid = parseInt(body.session_id, 10) || 0;
             if (sid <= 0) return ok({ ok: false, error: 'session_id requerido' }, 400);
-            const data = await store.messagesRead(sid);
-            for (const msg of data.messages) {
-                if (msg.role === 'user' && msg.cancel_requested) {
-                    return ok({ ok: true, cancel: true, user_id: parseInt(msg.id, 10) });
-                }
+            const bridge = reqBridge(req, query);
+            const items = await store.queueForSession(bridge, sid);
+            for (const it of items) {
+                if (it.cancel_requested) return ok({ ok: true, cancel: true, user_id: parseInt(it.id, 10) });
             }
             return ok({ ok: true, cancel: false });
         }
@@ -386,9 +394,17 @@ async function handleApi(ctx) {
             }
             if (text === '' && img === '') return ok({ ok: false, error: 'Mensaje vacio' }, 400);
             if (Array.from(text).length > 10000) return ok({ ok: false, error: 'Mensaje demasiado largo' }, 400);
-            const extra = { agent: String(sess.agent || 'build'), author: s.name };
+            const extra = { agent: String(sess.agent || 'build') };
             if (img !== '') extra.img = img;
-            const id = await store.addMessage(sid, 'user', text, 'pending', extra);
+            // El hub no guarda el mensaje: va a la cola transitoria del puente.
+            const bridge = store.sessionBridge(sess) || await webBridge(req, query);
+            const id = await store.queueAdd(bridge, {
+                session: sid,
+                text: text,
+                img: img !== '' ? img : null,
+                model: String(sess.model || ''),
+                agent: String(sess.agent || 'build'),
+            });
             if (store.sessionHasDefaultName(sess)) {
                 const t = store.sessionTitleFromPrompt(text);
                 if (t !== '') await store.sessionRename(sid, t);
@@ -463,6 +479,19 @@ async function handleApi(ctx) {
             const result = await store.sessionImport(oc, name, folder, model, agent, updated, msgs, tokens, cost, bridge, rename);
             if (!result.ok) return ok(result, 400);
             return ok(result);
+        }
+        case 'index_sync': {
+            if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
+            const bridge = reqBridge(req, query);
+            const count = await store.sessionIndexSync(bridge, body.sessions);
+            return ok({ ok: true, count });
+        }
+        case 'history_ready': {
+            if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
+            const id = parseInt(body.id, 10) || 0;
+            if (id <= 0) return ok({ ok: false, error: 'id invalido' }, 400);
+            await store.historyReady(id, body);
+            return ok({ ok: true });
         }
         case 'session_reconcile': {
             if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
@@ -553,67 +582,33 @@ async function handleApi(ctx) {
                 }
             }
             const claimed = [];
-            const knownOc = [];
             if (!lite) {
-                const sdata = await store.sessionsRead();
-                const adopted = [];
-                for (const sess of sdata.sessions) {
-                    if (!(await store.bridgeCanClaimSession(bridge, sess))) continue;
-                    const mdata = await store.messagesRead(sess.id);
-                    let changed = false;
-                    for (const msg of mdata.messages) {
-                        if (msg.role !== 'user') continue;
-                        const pending = msg.status === 'pending';
-                        const processing = msg.status === 'processing' && Date.parse(msg.ts || 0) < cutoff;
-                        if (!(pending || processing)) continue;
-                        if (msg.cancel_requested) {
-                            msg.status = 'canceled';
-                            msg.canceled_ts = store.nowIso();
-                            delete msg.cancel_requested;
-                            changed = true;
-                            continue;
-                        }
-                        msg.status = 'processing';
-                        msg.ts = store.nowIso();
-                        changed = true;
-                        if (bridge !== '' && store.sessionBridge(sess) === '') {
-                            sess.bridge = bridge;
-                            if (!adopted.includes(parseInt(sess.id, 10))) adopted.push(parseInt(sess.id, 10));
-                        }
+                const items = await store.queueClaim(bridge, store.STALE_PROCESSING_SECONDS * 1000);
+                if (items.length) {
+                    const sdata = await store.sessionsRead();
+                    for (const it of items) {
+                        const sess = sdata.sessions.find((s) => parseInt(s.id, 10) === parseInt(it.session, 10));
+                        if (!sess) continue;
                         claimed.push({
                             session_id: parseInt(sess.id, 10),
-                            id: parseInt(msg.id, 10),
-                            text: msg.text,
-                            img: msg.img !== undefined ? String(msg.img) : null,
+                            id: parseInt(it.id, 10),
+                            text: it.text || '',
+                            img: it.img !== undefined && it.img !== null ? String(it.img) : null,
                             opencode_session: sess.opencode_session || null,
                             session: {
                                 id: parseInt(sess.id, 10),
                                 name: sess.name,
                                 folder: sess.folder || '',
-                                model: sess.model || '',
-                                agent: sess.agent || 'build',
+                                model: it.model || sess.model || '',
+                                agent: it.agent || sess.agent || 'build',
                             },
                         });
                     }
-                    if (changed) await jsonfile.writeAtomic(paths.messagesFile(sess.id), mdata);
-                }
-                if (adopted.length) {
-                    await store.sessionsUpdate((sd) => {
-                        for (const s of sd.sessions) {
-                            if (adopted.includes(parseInt(s.id, 10)) && store.sessionBridge(s) === '') s.bridge = bridge;
-                        }
-                    });
-                }
-                const fresh = await store.sessionsRead();
-                for (const s of fresh.sessions) {
-                    if (!s.opencode_session || s.importada) continue;
-                    const owner = store.sessionBridge(s);
-                    if (owner === '' || owner === bridge) knownOc.push(String(s.opencode_session));
                 }
             }
             const foldersToCreate = lite ? [] : await store.catalogClaimRequests(file);
             const commands = await store.claimCommands(file);
-            return ok({ ok: true, messages: claimed, folders: foldersToCreate, commands, known_oc: knownOc });
+            return ok({ ok: true, messages: claimed, folders: foldersToCreate, commands, known_oc: [] });
         }
         case 'folder_done': {
             if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
@@ -645,32 +640,23 @@ async function handleApi(ctx) {
             const userId = parseInt(body.user_id, 10) || 0;
             const text = String(body.text || '').trim();
             const reasoning = String(body.reasoning || '').trim();
+            const parts = Array.isArray(body.parts) ? body.parts : [];
             const ocMsg = String(body.oc_msg || '').trim();
             if (sid <= 0 || userId <= 0) return ok({ ok: false, error: 'session_id y user_id son obligatorios' }, 400);
             if (Array.from(text).length > 50000 || Array.from(reasoning).length > 50000) return ok({ ok: false, error: 'Respuesta demasiado larga' }, 400);
-            if (text === '' && reasoning === '') return ok({ ok: false, error: 'Nada para publicar' }, 400);
-            await store.messagesUpdate(sid, (data) => {
-                let draftIdx = -1;
-                for (let i = 0; i < data.messages.length; i++) {
-                    const m = data.messages[i];
-                    if (m.role === 'assistant' && m.draft_for && parseInt(m.draft_for, 10) === userId) { draftIdx = i; break; }
-                }
-                if (draftIdx >= 0) {
-                    data.messages[draftIdx].text = text;
-                    if (reasoning !== '') data.messages[draftIdx].reasoning = reasoning;
-                    if (ocMsg !== '') data.messages[draftIdx].oc_msg = ocMsg;
-                    data.messages[draftIdx].ts = store.nowIso();
-                } else {
-                    const aid = data.nextId;
-                    data.nextId = aid + 1;
-                    const draft = {
-                        id: aid, role: 'assistant', text, ts: store.nowIso(), status: 'streaming',
-                        draft_for: userId, agent: store.messageAgentOf(data, userId),
-                    };
-                    if (reasoning !== '') draft.reasoning = reasoning;
-                    if (ocMsg !== '') draft.oc_msg = ocMsg;
-                    data.messages.push(draft);
-                }
+            if (text === '' && reasoning === '' && !parts.length) return ok({ ok: false, error: 'Nada para publicar' }, 400);
+            // El hub no guarda el turno: lo deja en inflight (transitorio) para
+            // que la web lo vea en vivo; al terminar se limpia y manda opencode.
+            const bridge = reqBridge(req, query);
+            await store.inflightSet(bridge, {
+                session_id: sid,
+                user_id: userId,
+                text: text,
+                reasoning: reasoning,
+                parts: parts,
+                oc_msg: ocMsg,
+                status: 'streaming',
+                ts: store.nowIso(),
             });
             return ok({ ok: true });
         }
@@ -684,8 +670,6 @@ async function handleApi(ctx) {
             const exists = await store.getSession(sid);
             if (!exists) return ok({ ok: false, error: 'Sesion no encontrada' }, 404);
             const oc = body.opencode_session ? String(body.opencode_session).trim() : '';
-            const reasoning = String(body.reasoning || '').trim();
-            const ocMsg = String(body.oc_msg || '').trim();
             const clearSession = !!body.clear_session;
             const canceled = !!body.canceled;
             await store.sessionsUpdate((sd) => {
@@ -698,55 +682,14 @@ async function handleApi(ctx) {
                 }
                 sd.sessions[i].last_ts = store.nowIso();
             });
-            const sdata = await store.sessionsRead();
-            const sess = sdata.sessions.find((s) => parseInt(s.id, 10) === sid);
-            let aid = null;
-            const found = await store.messagesUpdate(sid, (data) => {
-                let msgFound = false;
-                let author = '';
-                for (const msg of data.messages) {
-                    if (parseInt(msg.id, 10) === userId) {
-                        msg.status = 'done';
-                        msg.answered_ts = store.nowIso();
-                        delete msg.cancel_requested;
-                        if (typeof msg.author === 'string') author = msg.author;
-                        msgFound = true;
-                        break;
-                    }
-                }
-                if (!msgFound) return false;
-                let draftIdx = -1;
-                for (let i = 0; i < data.messages.length; i++) {
-                    const m = data.messages[i];
-                    if (m.role === 'assistant' && m.draft_for && parseInt(m.draft_for, 10) === userId) { draftIdx = i; break; }
-                }
-                if (draftIdx >= 0) {
-                    const m = data.messages[draftIdx];
-                    aid = parseInt(m.id, 10);
-                    m.text = text;
-                    m.status = 'done';
-                    m.answered_ts = store.nowIso();
-                    m.ts = store.nowIso();
-                    if (reasoning !== '') m.reasoning = reasoning; else delete m.reasoning;
-                    if (ocMsg !== '') m.oc_msg = ocMsg;
-                    if (canceled) m.canceled = true; else delete m.canceled;
-                    if (!m.agent) m.agent = store.messageAgentOf(data, userId, (sess && sess.agent) || '');
-                    if (author && !m.author) m.author = author;
-                    delete m.draft_for;
-                } else {
-                    aid = data.nextId;
-                    data.nextId = aid + 1;
-                    const nm = { id: aid, role: 'assistant', text, ts: store.nowIso(), status: 'done', agent: store.messageAgentOf(data, userId, (sess && sess.agent) || '') };
-                    if (reasoning !== '') nm.reasoning = reasoning;
-                    if (ocMsg !== '') nm.oc_msg = ocMsg;
-                    if (canceled) nm.canceled = true;
-                    if (author) nm.author = author;
-                    data.messages.push(nm);
-                }
-            });
-            if (found === false) return ok({ ok: false, error: 'Mensaje no encontrado' }, 404);
+            // El turno ya quedo en opencode: se limpia el inflight y la cola (el
+            // hub no guarda historial; la web lo lee por proxy).
+            const bridge = reqBridge(req, query);
+            await store.inflightClear(bridge);
+            await store.queueRemove(bridge, userId);
+            const sess = await store.getSession(sid);
             push.pushSend(app, (canceled ? '\u23f9 ' : '') + 'IA respondio \u00b7 ' + ((sess && sess.name) || 'chat'), store.mbSubstr(text, 0, 200) + (Array.from(text).length > 200 ? '.' : ''), 'chat.php?session=' + sid).catch(() => {});
-            return ok({ ok: true, id: aid });
+            return ok({ ok: true, id: userId });
         }
         case 'browse': {
             if (!auth.requireLogin(app, req, res)) return;
@@ -813,6 +756,19 @@ async function handleApi(ctx) {
         case 'oc_sessions': {
             if (!auth.requireLogin(app, req, res)) return;
             return ok({ ok: true, sessions: await store.ocSessionsList() });
+        }
+        case 'session_index': {
+            if (!auth.requireLogin(app, req, res)) return;
+            const bridge = await webBridge(req, query);
+            return ok({ ok: true, sessions: await store.sessionIndexList(bridge) });
+        }
+        case 'history_take': {
+            if (!auth.requireLogin(app, req, res)) return;
+            const id = parseInt(query.get('id') || '0', 10) || 0;
+            if (id <= 0) return ok({ ok: false, error: 'id invalido' }, 400);
+            const data = await store.historyTake(id);
+            if (!data) return ok({ ok: false, error: 'sin datos' }, 404);
+            return ok({ ok: true, history: data });
         }
         case 'oc_session_attach': {
             if (!auth.requireLogin(app, req, res)) return;
