@@ -104,6 +104,7 @@ if ($action === 'bootstrap') {
         'bridge' => $bridge,
         'bridges' => $live,
         'sessions' => sessions_list_full(),
+        'totals' => session_index_totals($bridge),
         'features' => ['pairing' => true],
     ];
     if ($changed) {
@@ -119,7 +120,7 @@ if ($action === 'bootstrap') {
 
 if ($action === 'sessions') {
     require_login_readonly();
-    json_response(['ok' => true, 'sessions' => sessions_list_full()]);
+    json_response(['ok' => true, 'sessions' => sessions_list_full(), 'totals' => session_index_totals(resolve_web_bridge())]);
 }
 
 if ($action === 'session_create') {
@@ -156,6 +157,8 @@ if ($action === 'session_create') {
     if ($id === null) {
         json_response(['ok' => false, 'error' => 'No se pudo crear'], 500);
     }
+    // Usar un proyecto lo conecta: el puente empieza a publicar sus sesiones.
+    enqueue_command('folder_attach', [$folder], $file);
     json_response(['ok' => true, 'session' => get_session($id)]);
 }
 
@@ -415,9 +418,10 @@ if ($action === 'sync_catalog') {
             $folders[] = [
                 'name' => mb_substr((string)$f['name'], 0, 60),
                 'path' => mb_substr((string)$f['path'], 0, 500),
+                'active' => !empty($f['active']),
             ];
         } elseif (is_string($f)) {
-            $folders[] = ['name' => mb_substr($f, 0, 60), 'path' => mb_substr($f, 0, 500)];
+            $folders[] = ['name' => mb_substr($f, 0, 60), 'path' => mb_substr($f, 0, 500), 'active' => false];
         }
     }
     $models = [];
@@ -528,7 +532,7 @@ if ($action === 'index_sync') {
     if (!is_array($body)) {
         json_response(['ok' => false, 'error' => 'Body inválido'], 400);
     }
-    $count = session_index_sync($bridge, $body['sessions'] ?? []);
+    $count = session_index_sync($bridge, $body['sessions'] ?? [], $body['totals'] ?? []);
     json_response(['ok' => true, 'count' => $count]);
 }
 
@@ -624,6 +628,76 @@ if ($action === 'request_folder') {
     }
     $id = catalog_add_request($name, $file);
     json_response(['ok' => true, 'request' => ['id' => $id, 'name' => $name]]);
+}
+
+// Conectar/desconectar un proyecto del sidebar (admin). El hub encola el comando
+// al puente, que marca la carpeta activa y publica sus ultimas sesiones; el
+// sidebar arranca en blanco y solo muestra lo conectado.
+if ($action === 'folder_attach' || $action === 'folder_detach') {
+    $u = require_csrf();
+    if (($u['role'] ?? '') !== 'admin') {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
+    }
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body)) {
+        $body = $_POST;
+    }
+    $bridge = isset($body['bridge']) && is_string($body['bridge']) && bridge_valid_id($body['bridge'])
+        ? $body['bridge'] : resolve_web_bridge();
+    if (!ob_bridge_visible($bridge, $u)) {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
+    }
+    $folder = trim((string)($body['folder'] ?? ''));
+    if ($folder === '') {
+        json_response(['ok' => false, 'error' => 'Falta la carpeta'], 400);
+    }
+    $file = bridge_catalog_file($bridge);
+    if ($action === 'folder_attach' && folder_path_in_catalog($folder, $file) === null) {
+        json_response(['ok' => false, 'error' => 'Carpeta no disponible'], 400);
+    }
+    $active = ($action === 'folder_attach');
+    // Refleja el estado en el catalogo al instante (el puente lo confirma).
+    catalog_modify(function (&$cat) use ($folder, $active) {
+        if (!isset($cat['folders']) || !is_array($cat['folders'])) return;
+        foreach ($cat['folders'] as $i => $f) {
+            if (is_array($f) && ($f['path'] ?? '') === $folder) {
+                $cat['folders'][$i]['active'] = $active;
+            }
+        }
+    }, $file);
+    $id = enqueue_command($active ? 'folder_attach' : 'folder_detach', [$folder], $file);
+    // Al desconectar, saca ya del sidebar las sesiones importadas de esa carpeta
+    // (el puente confirma y republica el indice igual).
+    $pruned = $active ? 0 : session_prune_folder($folder, $bridge);
+    json_response(['ok' => true, 'id' => $id, 'folder' => $folder, 'active' => $active, 'pruned' => $pruned]);
+}
+
+// "Ver mas sesiones": pide al puente que publique 4 sesiones mas de un proyecto
+// conectado (sube el limite de esa carpeta y republica el indice).
+if ($action === 'folder_more') {
+    $u = require_csrf();
+    if (($u['role'] ?? '') !== 'admin') {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
+    }
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body)) {
+        $body = $_POST;
+    }
+    $bridge = isset($body['bridge']) && is_string($body['bridge']) && bridge_valid_id($body['bridge'])
+        ? $body['bridge'] : resolve_web_bridge();
+    if (!ob_bridge_visible($bridge, $u)) {
+        json_response(['ok' => false, 'error' => 'Permiso insuficiente'], 403);
+    }
+    $folder = trim((string)($body['folder'] ?? ''));
+    if ($folder === '') {
+        json_response(['ok' => false, 'error' => 'Falta la carpeta'], 400);
+    }
+    $step = (int)($body['step'] ?? 4);
+    if ($step < 1) $step = 4;
+    if ($step > 50) $step = 50;
+    $file = bridge_catalog_file($bridge);
+    $id = enqueue_command('folder_more', [$folder, $step], $file);
+    json_response(['ok' => true, 'id' => $id, 'folder' => $folder, 'step' => $step]);
 }
 
 // ---------------------------------------------------------------------------
@@ -796,7 +870,16 @@ if ($action === 'poll') {
     }
     json_done($sfp);
     $commands = $hasPendingCmd ? claim_commands($file) : [];
-    json_response(['ok' => true, 'messages' => $claimed, 'folders' => $foldersToCreate, 'commands' => $commands, 'known_oc' => $knownOc]);
+    json_response(['ok' => true, 'messages' => $claimed, 'folders' => $foldersToCreate, 'commands' => $commands, 'known_oc' => $knownOc, 'reset' => bridge_reset_pending()]);
+}
+
+// El puente confirma que desconecto los proyectos tras un reset del hub.
+if ($action === 'reset_ack') {
+    if (!check_bridge_token($_SERVER)) {
+        json_response(['ok' => false, 'error' => 'Token inválido'], 401);
+    }
+    bridge_reset_clear();
+    json_response(['ok' => true]);
 }
 
 if ($action === 'folder_done') {
@@ -1228,6 +1311,7 @@ if ($action === 'oc_session_attach') {
         json_response(['ok' => false, 'error' => 'Agente no disponible'], 400);
     }
     $id = add_session($name !== '' ? $name : 'Opencode ' . substr($opencodeSession, 0, 8), $folder, $model, $agent, $opencodeSession, $bridge);
+    if ($folder !== '') enqueue_command('folder_attach', [$folder], $file);
     json_response(['ok' => true, 'session' => get_session($id)]);
 }
 

@@ -34,6 +34,15 @@ const MOCK_OC = [
     "    out(JSON.stringify({ type: 'tool', sessionID: 'ses_mock1', part: { id: 'prt_t1', messageID: 'msg_x1', tool: 'bash', callID: 'call_1', state: { status: 'completed', title: 'echo hola', input: { command: 'echo hola' }, output: 'hola' } } }));",
     "} else if (args[0] === 'export') {",
     "    out(JSON.stringify({ info: { directory: process.cwd(), title: 'mock', cost: 0.001, tokens: { input: 1, output: 2, reasoning: 0 } }, messages: [] }));",
+    "} else if (args[0] === 'session' && args[1] === 'list') {",
+    "    if (args.indexOf('--format') >= 0 && args.indexOf('json') >= 0) {",
+    "        const arr = [];",
+    "        for (let i = 1; i <= 6; i++) arr.push({ id: 'ses_cap0000' + i, title: 'cap ' + i, updated: 1789000000000 + i * 1000, directory: process.cwd() });",
+    "        arr.push({ id: 'ses_ajeno0001', title: 'ajena', updated: 1789000999999, directory: 'C:/otro/proyecto' });",
+    "        out(JSON.stringify(arr));",
+    "    } else {",
+    "        out('ses_cap00001  cap 1  10:00');",
+    "    }",
     "} else if (args[0] === 'mcp') {",
     "    out('• mariadb connected');",
     "    out('• playwright connected');",
@@ -45,11 +54,12 @@ const MOCK_OC = [
 ].join('\n');
 
 function startMockApi(workspace) {
-    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, proc: null, resolveProc: null, import: null, resolveImport: null, seen: [], workspace };
+    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, proc: null, resolveProc: null, import: null, resolveImport: null, index: null, resolveIndex: null, seen: [], workspace };
     const responded = new Promise((resolve) => { state.resolveRespond = resolve; });
     const commanded = new Promise((resolve) => { state.resolveCommand = resolve; });
     const procced = new Promise((resolve) => { state.resolveProc = resolve; });
     const imported = new Promise((resolve) => { state.resolveImport = resolve; });
+    const indexed = new Promise((resolve) => { state.resolveIndex = resolve; });
     const server = http.createServer((req, res) => {
         let raw = '';
         req.on('data', (c) => { raw += c; });
@@ -81,6 +91,11 @@ function startMockApi(workspace) {
                             { id: 11, name: 'session_sync', args: ['ses_mock1', workspace] },
                         ],
                     };
+                } else if (state.syncDone && !state.moreSent) {
+                    // Ya terminaron los comandos iniciales: pide "Ver mas
+                    // sesiones" (folder_more) para probar el paginado.
+                    state.moreSent = true;
+                    json = { ok: true, known_oc: [], messages: [], commands: [{ id: 12, name: 'folder_more', args: [workspace, '4'] }] };
                 } else {
                     json = { ok: true, known_oc: [], messages: [], commands: [], folders: [] };
                 }
@@ -89,6 +104,7 @@ function startMockApi(workspace) {
                 if (state.resolveRespond) state.resolveRespond(state.respond);
             } else if (action === 'command_done') {
                 try { state.command = JSON.parse(raw || '{}'); } catch (e) { state.command = {}; }
+                if (state.command && state.command.id === 11) state.syncDone = true;
                 if (state.resolveCommand) state.resolveCommand(state.command);
             } else if (action === 'proc_result') {
                 try { state.proc = JSON.parse(raw || '{}'); } catch (e) { state.proc = {}; }
@@ -97,6 +113,10 @@ function startMockApi(workspace) {
                 try { state.import = JSON.parse(raw || '{}'); } catch (e) { state.import = {}; }
                 if (state.resolveImport) state.resolveImport(state.import);
                 json = { ok: true, session_id: 1, created: true, added: 1 };
+            } else if (action === 'index_sync') {
+                try { state.index = JSON.parse(raw || '{}'); } catch (e) { state.index = {}; }
+                if (state.resolveIndex) state.resolveIndex(state.index);
+                json = { ok: true, count: (state.index.sessions || []).length };
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(json));
@@ -110,6 +130,7 @@ function startMockApi(workspace) {
             state.commanded = commanded;
             state.procced = procced;
             state.imported = imported;
+            state.indexed = indexed;
             resolve(state);
         });
     });
@@ -152,6 +173,9 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
         opencodeTimeoutMs: 20000,
     };
     fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(cfg, null, 2));
+    // Un proyecto conectado: el puente publica solo sus sesiones, cortadas a
+    // las 4 mas recientes (config sessionIndexLimit default).
+    fs.writeFileSync(path.join(home, 'folders.json'), JSON.stringify({ folders: [{ name: 'ws', path: ws, active: true }] }, null, 2));
 
     let logs = '';
     const bridge = spawn(process.execPath, [BRIDGE], {
@@ -245,4 +269,31 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     await new Promise((r) => setTimeout(r, 1200));
     assert.ok(!/liteTimer is not defined/.test(logs), 'no debe romper el finally de tick:\n' + logs);
     assert.ok(!/barrido de sesiones pausado/.test(logs), 'el barrido no debe quedar pausado por busy');
+
+    // index_sync: solo el proyecto conectado y a lo sumo 4 sesiones.
+    let idxTimer = null;
+    const idxTimeout = new Promise((_, reject) => {
+        idxTimer = setTimeout(() => reject(new Error('timeout esperando "index_sync"')), 15000);
+    });
+    let idx;
+    try {
+        idx = await Promise.race([api.indexed, idxTimeout]);
+    } finally {
+        clearTimeout(idxTimer);
+    }
+    assert.equal(idx.sessions.length, 4, 'corta a las 4 mas recientes');
+    assert.ok(idx.sessions.every((s) => s.folder === ws), 'solo la carpeta conectada');
+    assert.deepEqual(idx.sessions.map((s) => s.id), ['ses_cap00006', 'ses_cap00005', 'ses_cap00004', 'ses_cap00003']);
+    assert.equal(idx.totals[ws], 6, 'reporta el total de sesiones de la carpeta (sin contar las ajenas)');
+
+    // folder_more: el puente sube el limite de esa carpeta y republica con mas
+    // sesiones (la ajena de otra carpeta sigue afuera).
+    let moreIdx = null;
+    for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        if (api.index && Array.isArray(api.index.sessions) && api.index.sessions.length === 6) { moreIdx = api.index; break; }
+    }
+    assert.ok(moreIdx, 'folder_more republica con mas sesiones. Log:\n' + logs);
+    assert.ok(moreIdx.sessions.every((s) => s.folder === ws), 'folder_more no mete carpetas ajenas');
+    assert.equal(moreIdx.totals[ws], 6, 'el total sigue siendo el de la carpeta');
 });

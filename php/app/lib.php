@@ -391,8 +391,9 @@ function session_index_file($bridge = '') {
 function history_fetch_file($id) {
     return DATA_DIR . '/fetch-' . (int)$id . '.json';
 }
-function session_index_sync($bridge, $sessions) {
+function session_index_sync($bridge, $sessions, $totals = []) {
     $list = [];
+    $indexSet = [];
     foreach ((array)$sessions as $s) {
         if (!is_array($s)) continue;
         $id = trim((string)($s['id'] ?? ''));
@@ -403,15 +404,27 @@ function session_index_sync($bridge, $sessions) {
             'folder' => mb_substr((string)($s['folder'] ?? ''), 0, 500),
             'updated' => (string)($s['updated'] ?? ''),
         ];
+        $indexSet[$id] = true;
         if (count($list) >= 5000) break;
+    }
+    // Total de sesiones por carpeta conectada: la web lo usa para saber si hay
+    // mas sesiones para pedir ("Ver mas sesiones").
+    $tot = [];
+    if (is_array($totals)) {
+        foreach ($totals as $k => $v) {
+            $k = trim((string)$k);
+            if ($k === '') continue;
+            $tot[mb_substr($k, 0, 500)] = max(0, (int)$v);
+        }
     }
     $fp = null;
     json_read(session_index_file($bridge), $fp);
-    json_save(['sessions' => $list, 'ts' => gmdate('c')], $fp);
+    json_save(['sessions' => $list, 'totals' => $tot, 'ts' => gmdate('c')], $fp);
     // Alta/actualizacion de las sesiones de opencode en el registro del hub
     // (metadatos, sin historial) para que aparezcan en el sidebar.
     $sdata = sessions_read($sfp);
     foreach ($list as $it) {
+        $uts = ($it['updated'] !== '' && @strtotime($it['updated'])) ? gmdate('c', @strtotime($it['updated'])) : '';
         $foundIdx = -1;
         foreach ($sdata['sessions'] as $i => $s) {
             if (!empty($s['opencode_session']) && (string)$s['opencode_session'] === $it['id']) { $foundIdx = $i; break; }
@@ -421,25 +434,48 @@ function session_index_sync($bridge, $sessions) {
             if ($it['title'] !== '' && !session_name_placeholder($it['title'])) $s['name'] = $it['title'];
             if ($it['folder'] !== '' && (string)($s['folder'] ?? '') !== $it['folder']) $s['folder'] = $it['folder'];
             $s['importada'] = true;
+            if ($uts !== '' && (string)($s['last_ts'] ?? '') < $uts) $s['last_ts'] = $uts;
             if (bridge_valid_id($bridge) && session_bridge($s) === '') $s['bridge'] = $bridge;
             unset($s);
         } else {
             $id = (int)$sdata['nextId'];
             $sdata['nextId'] = $id + 1;
+            $ts = $uts !== '' ? $uts : gmdate('c');
             $sess = [
                 'id' => $id,
                 'name' => $it['title'] !== '' ? $it['title'] : ('Opencode ' . substr($it['id'], 0, 8)),
                 'folder' => $it['folder'],
                 'model' => '',
                 'agent' => 'build',
-                'created_ts' => gmdate('c'),
-                'last_ts' => gmdate('c'),
+                'created_ts' => $ts,
+                'last_ts' => $ts,
                 'opencode_session' => $it['id'],
                 'importada' => true,
             ];
             if (bridge_valid_id($bridge)) $sess['bridge'] = $bridge;
             $sdata['sessions'][] = $sess;
         }
+    }
+    // Poda: el indice es autoritativo (el puente manda solo las sesiones de los
+    // proyectos conectados, cortadas a las mas recientes). Las importadas de
+    // este puente que ya no vienen se borran para que el sidebar refleje la PC
+    // y no acumule sesiones fantasma.
+    $sole = sole_bridge_id();
+    $keep = [];
+    $del = [];
+    foreach ($sdata['sessions'] as $s) {
+        $oc = isset($s['opencode_session']) ? (string)$s['opencode_session'] : '';
+        $owner = session_bridge($s);
+        $mine = ($owner === $bridge) || ($owner === '' && $sole === $bridge);
+        if ($mine && !empty($s['importada']) && $oc !== '' && !isset($indexSet[$oc])) {
+            $del[] = (int)$s['id'];
+            continue;
+        }
+        $keep[] = $s;
+    }
+    if ($del) {
+        $sdata['sessions'] = $keep;
+        foreach ($del as $id) { @unlink(session_messages_file($id)); }
     }
     sessions_save($sdata, $sfp);
     return count($list);
@@ -449,6 +485,30 @@ function session_index_list($bridge) {
     $data = json_read(session_index_file($bridge), $fp);
     if ($fp) json_done($fp);
     return (is_array($data) && isset($data['sessions']) && is_array($data['sessions'])) ? $data['sessions'] : [];
+}
+function session_index_totals($bridge) {
+    $fp = null;
+    $data = json_read(session_index_file($bridge), $fp);
+    if ($fp) json_done($fp);
+    return (is_array($data) && isset($data['totals']) && is_array($data['totals'])) ? $data['totals'] : [];
+}
+
+// Marcador de reset: lo escribe el deploy (`clean`/`reset --wipe-data`) para que
+// el puente desconecte los proyectos y el sidebar quede en blanco. El puente lo
+// ve en el poll, limpia sus carpetas activas y confirma con `reset_ack`.
+function bridge_reset_marker() {
+    return DATA_DIR . '/.reset';
+}
+function bridge_reset_pending() {
+    return @file_exists(bridge_reset_marker());
+}
+function bridge_reset_request() {
+    $ok = @file_put_contents(bridge_reset_marker(), gmdate('c'));
+    if ($ok !== false) @chmod(bridge_reset_marker(), 0664);
+    return $ok !== false;
+}
+function bridge_reset_clear() {
+    @unlink(bridge_reset_marker());
 }
 function history_ready($id, $payload) {
     $fp = null;
@@ -746,7 +806,7 @@ function session_import($ocSession, $name, $folder, $model, $agent, $updatedTs, 
             foreach ($cat['folders'] as $f) {
                 if (is_array($f) && $f['path'] === $folder) return;
             }
-            $cat['folders'][] = ['name' => mb_substr((string)$base, 0, 60), 'path' => mb_substr($folder, 0, 500)];
+                $cat['folders'][] = ['name' => mb_substr((string)$base, 0, 60), 'path' => mb_substr($folder, 0, 500), 'active' => true];
         }, $file);
     }
     $sdata = sessions_read($fp);
@@ -1178,7 +1238,7 @@ function session_tokens($ocSession, $tokens, $cost, $folder = '', $bridge = '') 
             foreach ($cat['folders'] as $f) {
                 if (is_array($f) && $f['path'] === $folder) return;
             }
-            $cat['folders'][] = ['name' => mb_substr((string)$base, 0, 60), 'path' => mb_substr($folder, 0, 500)];
+                $cat['folders'][] = ['name' => mb_substr((string)$base, 0, 60), 'path' => mb_substr($folder, 0, 500), 'active' => true];
         }, $file);
     }
     $sdata = sessions_read($fp);
@@ -1238,6 +1298,34 @@ function session_reconcile($known, $folders, $bridge) {
         json_done($fp);
     }
     return ['ok' => true, 'deleted' => count($del)];
+}
+
+// Al desconectar un proyecto, saca del hub las sesiones importadas de esa
+// carpeta para que el sidebar se actualice al instante (el puente igual
+// confirma y republica el indice). Devuelve cuantas borro.
+function session_prune_folder($folder, $bridge) {
+    if (!bridge_valid_id($bridge) || trim((string)$folder) === '') return 0;
+    $norm = reconcile_norm_folder($folder);
+    $sdata = sessions_read($fp);
+    $keep = [];
+    $del = [];
+    $sole = sole_bridge_id();
+    foreach ($sdata['sessions'] as $s) {
+        $oc = isset($s['opencode_session']) ? (string)$s['opencode_session'] : '';
+        $owner = session_bridge($s);
+        $mine = ($owner === $bridge) || ($owner === '' && $sole === $bridge);
+        $sameF = reconcile_norm_folder($s['folder'] ?? '') === $norm;
+        if ($mine && !empty($s['importada']) && $oc !== '' && $sameF) { $del[] = (int)$s['id']; continue; }
+        $keep[] = $s;
+    }
+    if ($del) {
+        $sdata['sessions'] = $keep;
+        sessions_save($sdata, $fp);
+        foreach ($del as $id) { @unlink(session_messages_file($id)); }
+    } else {
+        json_done($fp);
+    }
+    return count($del);
 }
 
 // Agente con el que se envió el mensaje $userId (para estamparlo en la
@@ -1584,7 +1672,7 @@ function catalog_finish_request($id, $ok, $folder = null, $error = '', $file = C
                         }
                     }
                     if (!$exists) {
-                        $cat['folders'][] = ['name' => $folder['name'], 'path' => $folder['path']];
+                        $cat['folders'][] = ['name' => $folder['name'], 'path' => $folder['path'], 'active' => true];
                     }
                 }
             }
@@ -2276,6 +2364,7 @@ function prune_commands($cat, $keep = 60, $maxBytes = 2097152) {
 // Solo mira mensajes de sesiones que puede ejecutar ESTE puente ($bridge),
 // más su propia cola de carpetas/comandos.
 function poll_peek_work($cutoff, $bridge = '') {
+    if (bridge_reset_pending()) return true;
     $work = false;
     $q = queue_read($bridge);
     foreach ($q['items'] as $it) {

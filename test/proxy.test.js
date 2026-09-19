@@ -143,3 +143,76 @@ test('inflight: set, get y clear', async () => {
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('sessionIndexSync: poda las importadas que ya no vienen en el indice', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-proxy-'));
+    paths.setBase(dir);
+    paths.ensureDirs();
+    try {
+        await store.sessionIndexSync('pc1', [
+            { id: 'ses_aaa11111', title: 'Uno', folder: 'C:/p', updated: '2026-09-18T10:00:00.000Z' },
+            { id: 'ses_bbb22222', title: 'Dos', folder: 'C:/p', updated: '2026-09-18T11:00:00.000Z' },
+        ]);
+        let list = await store.sessionsListFull();
+        assert.equal(list.length, 2);
+        const gone = list.find((s) => s.opencode_session === 'ses_aaa11111');
+        await store.messagesUpdate(gone.id, (data) => { data.messages.push({ role: 'user', text: 'x' }); });
+        // El indice nuevo solo trae la segunda: la primera se poda.
+        await store.sessionIndexSync('pc1', [
+            { id: 'ses_bbb22222', title: 'Dos', folder: 'C:/p', updated: '2026-09-18T11:00:00.000Z' },
+        ]);
+        list = await store.sessionsListFull();
+        assert.equal(list.length, 1);
+        assert.equal(list[0].opencode_session, 'ses_bbb22222');
+        // El historial de la podada tambien se limpia.
+        const msgs = await store.messagesRead(gone.id);
+        assert.equal((msgs.messages || []).length, 0);
+    } finally {
+        paths.setBase('');
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('sessionIndexSync: guarda totales por carpeta; sessionPruneFolder borra las de una carpeta', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-proxy-'));
+    paths.setBase(dir);
+    paths.ensureDirs();
+    try {
+        await store.sessionIndexSync('pc1', [
+            { id: 'ses_aaa11111', title: 'Uno', folder: 'C:/p', updated: '2026-09-18T10:00:00.000Z' },
+            { id: 'ses_bbb22222', title: 'Dos', folder: 'C:/q', updated: '2026-09-18T11:00:00.000Z' },
+        ], { 'C:/p': 9, 'C:/q': 3 });
+        const totals = await store.sessionIndexTotals('pc1');
+        assert.equal(totals['C:/p'], 9);
+        assert.equal(totals['C:/q'], 3);
+        // Desconectar C:/p borra solo sus importadas.
+        const pruned = await store.sessionPruneFolder('C:/p', 'pc1');
+        assert.equal(pruned, 1);
+        const list = await store.sessionsListFull();
+        assert.equal(list.length, 1);
+        assert.equal(list[0].opencode_session, 'ses_bbb22222');
+    } finally {
+        paths.setBase('');
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('bridgeReset: marcador de reset (pending/request/clear) y pollPeekWork', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-proxy-'));
+    paths.setBase(dir);
+    paths.ensureDirs();
+    try {
+        assert.equal(await store.bridgeResetPending(), false);
+        assert.equal(await store.pollPeekWork(Date.now(), 'pc1'), false);
+        await store.bridgeResetRequest();
+        assert.equal(await store.bridgeResetPending(), true);
+        // El marcador despierta el long-poll del puente.
+        assert.equal(await store.pollPeekWork(Date.now(), 'pc1'), true);
+        await store.bridgeResetClear();
+        assert.equal(await store.bridgeResetPending(), false);
+        assert.equal(await store.pollPeekWork(Date.now(), 'pc1'), false);
+    } finally {
+        paths.setBase('');
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

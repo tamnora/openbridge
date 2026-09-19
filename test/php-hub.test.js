@@ -235,4 +235,56 @@ test('hub PHP: login, pairing y aislamiento por usuario', { skip: hasPhp ? false
     const row1 = s1.json.sessions.find((s) => s.id === sid);
     assert.ok(row1, 'la sesion sigue en el registro');
     assert.ok(row1.last_ts);
+
+    // index_sync: alta + poda de las importadas que ya no vienen en el indice.
+    const ix1 = await api('index_sync', { method: 'POST', token: poll.json.bridge_token, body: { sessions: [
+        { id: 'ses_ix000001', title: 'IX uno', folder: 'C:/demo', updated: '2026-09-18T10:00:00.000Z' },
+        { id: 'ses_ix000002', title: 'IX dos', folder: 'C:/demo', updated: '2026-09-18T11:00:00.000Z' },
+    ], totals: { 'C:/demo': 7 } } });
+    assert.equal(ix1.json.count, 2);
+    let sList = (await api('sessions', { cookie: admin.cookie })).json.sessions;
+    assert.ok(sList.some((s) => s.opencode_session === 'ses_ix000001'));
+    const totals = (await api('sessions&bridge=pc1', { cookie: admin.cookie })).json.totals;
+    assert.equal(totals['C:/demo'], 7, 'el hub guarda el total por carpeta: ' + JSON.stringify(totals));
+    const ix2 = await api('index_sync', { method: 'POST', token: poll.json.bridge_token, body: { sessions: [
+        { id: 'ses_ix000002', title: 'IX dos', folder: 'C:/demo', updated: '2026-09-18T11:00:00.000Z' },
+    ] } });
+    assert.equal(ix2.json.count, 1);
+    sList = (await api('sessions', { cookie: admin.cookie })).json.sessions;
+    assert.ok(!sList.some((s) => s.opencode_session === 'ses_ix000001'), 'la sesion que ya no viene se poda');
+    assert.ok(sList.some((s) => s.opencode_session === 'ses_ix000002'));
+
+    // folder_attach: encola el comando al puente y marca la carpeta activa.
+    const att = await api('folder_attach', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { folder: 'C:/demo', bridge: 'pc1' } });
+    assert.equal(att.json.ok, true, JSON.stringify(att.json));
+    const catAtt = await api('catalog&bridge=pc1', { cookie: admin.cookie });
+    const demo = catAtt.json.catalog.folders.find((f) => f.path === 'C:/demo');
+    assert.equal(demo.active, true);
+    const pollCmd = await api('poll', { method: 'POST', token: poll.json.bridge_token, body: {} });
+    assert.ok((pollCmd.json.commands || []).some((c) => c.name === 'folder_attach' && c.args[0] === 'C:/demo'));
+
+    // folder_more ("Ver mas sesiones"): encola el comando al puente.
+    const more = await api('folder_more', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { folder: 'C:/demo', bridge: 'pc1', step: 4 } });
+    assert.equal(more.json.ok, true, JSON.stringify(more.json));
+    const pollMore = await api('poll', { method: 'POST', token: poll.json.bridge_token, body: {} });
+    assert.ok((pollMore.json.commands || []).some((c) => c.name === 'folder_more' && c.args[0] === 'C:/demo'), 'folder_more viaja al puente');
+
+    // folder_detach: saca al instante las importadas de esa carpeta.
+    const det = await api('folder_detach', { method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { folder: 'C:/demo', bridge: 'pc1' } });
+    assert.equal(det.json.ok, true);
+    assert.equal(det.json.pruned, 1, 'poda las importadas de la carpeta');
+    const sAfter = (await api('sessions', { cookie: admin.cookie })).json.sessions;
+    assert.ok(!sAfter.some((s) => s.opencode_session === 'ses_ix000002'), 'folder_detach saca la carpeta del sidebar');
+
+    // reset: el marcador viaja en el poll y reset_ack lo borra.
+    fs.writeFileSync(path.join(obHome, 'data', '.reset'), 'now');
+    const pollReset = await api('poll', { method: 'POST', token: poll.json.bridge_token, body: {} });
+    assert.equal(pollReset.json.reset, true);
+    const ack = await api('reset_ack', { method: 'POST', token: poll.json.bridge_token, body: {} });
+    assert.equal(ack.json.ok, true);
+    const pollAfter = await api('poll', { method: 'POST', token: poll.json.bridge_token, body: {} });
+    assert.equal(pollAfter.json.reset, false);
 });
+
+
+

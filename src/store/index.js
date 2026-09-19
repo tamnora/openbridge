@@ -178,7 +178,7 @@ async function sessionImport(ocSession, name, folder, model, agent, updatedTs, m
         await catalogModify(file, (cat) => {
             if (!Array.isArray(cat.folders)) cat.folders = [];
             if (cat.folders.some((f) => f && f.path === folder)) return;
-            cat.folders.push({ name: mbSubstr(base, 0, 60), path: mbSubstr(folder, 0, 500) });
+            cat.folders.push({ name: mbSubstr(base, 0, 60), path: mbSubstr(folder, 0, 500), active: true });
         });
     }
     const cat = await catalogRead(file);
@@ -317,7 +317,7 @@ async function sessionTokens(ocSession, tokens, cost, folder = '', bridge = '') 
         await catalogModify(file, (cat) => {
             if (!Array.isArray(cat.folders)) cat.folders = [];
             if (cat.folders.some((f) => f && f.path === folder)) return;
-            cat.folders.push({ name: mbSubstr(base, 0, 60), path: mbSubstr(folder, 0, 500) });
+            cat.folders.push({ name: mbSubstr(base, 0, 60), path: mbSubstr(folder, 0, 500), active: true });
         });
     }
     await sessionsUpdate((sdata) => {
@@ -519,7 +519,7 @@ async function catalogFinishRequest(id, ok, folder, error, file) {
             if (ok && folder && folder.name && folder.path) {
                 if (!Array.isArray(cat.folders)) cat.folders = [];
                 if (!cat.folders.some((f) => f && f.path === folder.path)) {
-                    cat.folders.push({ name: folder.name, path: folder.path });
+                    cat.folders.push({ name: folder.name, path: folder.path, active: true });
                 }
             }
         }
@@ -804,6 +804,7 @@ async function finishCommand(id, ok, text, error, file) {
     return found;
 }
 async function pollPeekWork(cutoff, bridge) {
+    if (await bridgeResetPending()) return true;
     const data = await jsonfile.readJson(paths.queueFile(bridge), { items: [] });
     const items = Array.isArray(data.items) ? data.items : [];
     if (items.some((it) => it.status === 'pending'
@@ -1016,7 +1017,7 @@ async function purgeTmpData() {
 // ---------------------------------------------------------------------------
 // Indice de sesiones (proxy): metadatos que manda el puente, sin historial.
 // ---------------------------------------------------------------------------
-async function sessionIndexSync(bridge, sessions) {
+async function sessionIndexSync(bridge, sessions, totals) {
     const list = (Array.isArray(sessions) ? sessions : [])
         .filter((s) => s && typeof s === 'object' && /^ses_[A-Za-z0-9]{4,64}$/.test(String(s.id || '')))
         .map((s) => ({
@@ -1026,16 +1027,31 @@ async function sessionIndexSync(bridge, sessions) {
             updated: String(s.updated || ''),
         }))
         .slice(0, 5000);
-    await jsonfile.writeAtomic(paths.sessionIndexFile(bridge), { sessions: list, ts: nowIso() });
+    // Total de sesiones por carpeta conectada: la web lo usa para saber si hay
+    // mas sesiones para pedir ("Ver mas sesiones").
+    const tot = {};
+    if (totals && typeof totals === 'object') {
+        for (const k of Object.keys(totals)) {
+            const key = mbSubstr(String(k || '').trim(), 0, 500);
+            if (key === '') continue;
+            tot[key] = Math.max(0, parseInt(totals[k], 10) || 0);
+        }
+    }
+    await jsonfile.writeAtomic(paths.sessionIndexFile(bridge), { sessions: list, totals: tot, ts: nowIso() });
     // Alta/actualizacion de las sesiones de opencode en el registro del hub
     // (metadatos, sin historial) para que aparezcan en el sidebar.
+    const indexSet = new Set(list.map((s) => s.id));
+    const sole = await soleBridgeId();
+    const deleted = [];
     await sessionsUpdate((sdata) => {
         for (const it of list) {
+            const ts = (it.updated && !isNaN(Date.parse(it.updated))) ? new Date(it.updated).toISOString() : '';
             const found = sdata.sessions.find((s) => s.opencode_session && String(s.opencode_session) === it.id);
             if (found) {
                 if (it.title && !sessionNamePlaceholder(it.title)) found.name = it.title;
                 if (it.folder && String(found.folder || '') !== it.folder) found.folder = it.folder;
                 found.importada = true;
+                if (ts && String(found.last_ts || '') < ts) found.last_ts = ts;
                 if (bridgeValidId(bridge) && sessionBridge(found) === '') found.bridge = bridge;
             } else {
                 const id = sdata.nextId;
@@ -1046,8 +1062,8 @@ async function sessionIndexSync(bridge, sessions) {
                     folder: it.folder,
                     model: '',
                     agent: 'build',
-                    created_ts: nowIso(),
-                    last_ts: nowIso(),
+                    created_ts: ts || nowIso(),
+                    last_ts: ts || nowIso(),
                     opencode_session: it.id,
                     importada: true,
                 };
@@ -1055,12 +1071,78 @@ async function sessionIndexSync(bridge, sessions) {
                 sdata.sessions.push(sess);
             }
         }
+        // Poda: el indice es autoritativo (el puente manda solo las sesiones de
+        // los proyectos conectados, cortadas a las mas recientes). Las
+        // importadas de este puente que ya no vienen se borran para que el
+        // sidebar refleje la PC y no acumule sesiones fantasma.
+        sdata.sessions = sdata.sessions.filter((s) => {
+            const oc = s.opencode_session ? String(s.opencode_session) : '';
+            const owner = sessionBridge(s);
+            const mine = (owner === bridge) || (owner === '' && sole === bridge);
+            if (mine && s.importada && oc !== '' && !indexSet.has(oc)) {
+                deleted.push(parseInt(s.id, 10));
+                return false;
+            }
+            return true;
+        });
     });
+    for (const id of deleted) {
+        try { await fs.unlink(paths.messagesFile(id)); } catch (e) { /* no estaba */ }
+    }
     return list.length;
 }
 async function sessionIndexList(bridge) {
     const data = await jsonfile.readJson(paths.sessionIndexFile(bridge), { sessions: [] });
     return Array.isArray(data.sessions) ? data.sessions : [];
+}
+async function sessionIndexTotals(bridge) {
+    const data = await jsonfile.readJson(paths.sessionIndexFile(bridge), { sessions: [] });
+    return (data && data.totals && typeof data.totals === 'object') ? data.totals : {};
+}
+
+// Al desconectar un proyecto, saca del hub las sesiones importadas de esa
+// carpeta para que el sidebar se actualice al instante (el puente igual
+// confirma y republica el indice). Devuelve cuantas borro.
+async function sessionPruneFolder(folder, bridge) {
+    const norm = String(folder || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    if (!bridgeValidId(bridge) || norm === '') return 0;
+    const sole = await soleBridgeId();
+    const deleted = [];
+    await sessionsUpdate((sdata) => {
+        sdata.sessions = sdata.sessions.filter((s) => {
+            const oc = s.opencode_session ? String(s.opencode_session) : '';
+            const owner = sessionBridge(s);
+            const mine = (owner === bridge) || (owner === '' && sole === bridge);
+            const sf = String(s.folder || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+            if (mine && s.importada && oc !== '' && sf === norm) {
+                deleted.push(parseInt(s.id, 10));
+                return false;
+            }
+            return true;
+        });
+    });
+    for (const id of deleted) {
+        try { await fs.unlink(paths.messagesFile(id)); } catch (e) { /* no estaba */ }
+    }
+    return deleted.length;
+}
+
+// Marcador de reset: lo escribe el deploy (`clean`/`reset --wipe-data`) para
+// que el puente desconecte los proyectos y el sidebar quede en blanco. El
+// puente lo ve en el poll, limpia sus carpetas activas y confirma con
+// `reset_ack` (que borra el marcador).
+function resetMarkerFile() {
+    return path.join(paths.dataDir(), '.reset');
+}
+async function bridgeResetPending() {
+    try { await fs.access(resetMarkerFile()); return true; } catch (e) { return false; }
+}
+async function bridgeResetRequest() {
+    await jsonfile.writeAtomic(resetMarkerFile(), { ts: nowIso() });
+    return true;
+}
+async function bridgeResetClear() {
+    try { await fs.unlink(resetMarkerFile()); } catch (e) { /* no estaba */ }
 }
 
 // Resultado efimero de una lectura grande (historial): la web lo toma una vez.
@@ -1174,7 +1256,8 @@ module.exports = {
     safeJoinWorkspace, readTextFile, fileTooBig, fmtSize, workspaceList, workspaceListEntries,
     // busqueda / temas / opencode
     searchIndexBuild, themesIndex, themesKnown, ocSessionsList,
-    sessionIndexSync, sessionIndexList, historyReady, historyTake,
+    sessionIndexSync, sessionIndexList, sessionIndexTotals, sessionPruneFolder, historyReady, historyTake,
+    bridgeResetPending, bridgeResetRequest, bridgeResetClear,
     queueAdd, queueClaim, queueRemove, queueCancel, queueForSession,
     inflightSet, inflightGet, inflightClear,
     purgeTmpData,

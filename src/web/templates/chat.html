@@ -509,6 +509,11 @@
         .projsec .pshead .chev { width: 13px; font-size: 10px; color: var(--muted); flex-shrink: 0; }
         .projsec .pshead .psname { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: .03em; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .projsec .pshead .pscount { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+        .projsec .pshead .psx {
+            flex-shrink: 0; border: 0; background: transparent; color: var(--muted);
+            cursor: pointer; font: inherit; font-size: 12px; line-height: 1; padding: 3px 5px; border-radius: 6px;
+        }
+        .projsec .pshead .psx:hover { color: #f85149; background: var(--accent-soft); }
         .projsec .pbody { display: none; }
         .projsec.open .pbody { display: block; }
         .histrow { display: flex; gap: 6px; margin-top: 6px; }
@@ -1334,6 +1339,7 @@
             <button data-view="procs" type="button" title="Procesos de la sesión">procs</button>
             <button data-view="changes" type="button" title="Cambios del proyecto (git)">cambios</button>
             <button data-view="mcp" type="button" title="Servidores MCP de opencode">mcp</button>
+            <button data-view="projects" type="button" title="Conectar proyectos del workspace">proyectos</button>
         <button data-view="devices" type="button" title="PCs emparejadas a tu cuenta" style="display:none">dispositivos</button>
         </div>
         <div class="footer">
@@ -1420,6 +1426,7 @@
         <div id="viewProcs" class="view" style="display:none"></div>
         <div id="viewChanges" class="view" style="display:none"></div>
         <div id="viewMcp" class="view" style="display:none"></div>
+        <div id="viewProjects" class="view" style="display:none"></div>
         <div id="viewDevices" class="view" style="display:none"></div>
 
         <footer id="statusbar">

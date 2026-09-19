@@ -39,6 +39,15 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   predeterminado por puente desde el hub (`models_update`). Sin autor por
   mensaje (etiquetas fijas usuario/agente).
 - `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `AGENTS.md`, README, LICENSE, `.gitignore`.
+- Hub en blanco por defecto: los proyectos se **conectan a mano** (vista
+  `proyectos`); el puente solo publica el indice de las carpetas `active`,
+  cortado a las ultimas `sessionIndexLimit` sesiones (default 4) por proyecto y
+  **filtrado por carpeta** (`opencode session list` es global). **Ver mas
+  sesiones** pide 4 mas por proyecto (`folder_more`, con el total por carpeta en
+  el indice); el boton **quitar** desconecta y poda al instante. `index_sync`
+  **poda** las importadas que ya no vienen, y `deploy:hub clean|reset
+  --wipe-data` deja un marcador `.reset` para que el puente desconecte los
+  proyectos.
 
 ---
 

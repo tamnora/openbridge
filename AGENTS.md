@@ -105,6 +105,9 @@ al hosting por FTPS con `curl`, sin dependencias. Credenciales en `.deploy.env`
 
 Por defecto **no toca** `.openbridge/app.json` ni `.openbridge/data/**`; para
 incluirlos usar `--data` (solo `app.json`) o `--data-all` (ademas `data/**`).
+`clean --wipe-data` (o `reset --wipe-data`) vacia la data y deja un marcador
+`.openbridge/data/.reset` para que el puente desconecte los proyectos y el hub
+quede en blanco; `--no-reset-bridge` evita el marcador.
 Flags globales: `--dry-run`, `--yes`, `--no-build`, `--host <h>`.
 
 Cada archivo se sube **por trozos a un nombre temporal**, se verifica el tamano

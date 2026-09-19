@@ -68,6 +68,7 @@ var els = {
     viewChanges: document.getElementById('viewChanges'),
     viewMcp: document.getElementById('viewMcp'),
     viewDevices: document.getElementById('viewDevices'),
+    viewProjects: document.getElementById('viewProjects'),
     btnPanel: document.getElementById('btnPanel'),
     btnSync: document.getElementById('btnSync'),
     rpTreePane: document.getElementById('rpTreePane'),
@@ -179,6 +180,7 @@ var state = {
     pendingSessions: new Set(),
     sessions: [],
     sessionCount: 0,
+    totals: {},           // total de sesiones por carpeta (indice del puente)
     openProjects: null,   // Set de rutas de carpeta expandidas
     sideQuery: '',
     focusFolder: '',   // proyecto activo en el sidebar (destacado)
@@ -502,6 +504,7 @@ function applyBootPayload(data) {
         state.catalog.last_online_ts = data.online_ts;
     }
     var sessions = data.sessions || [];
+    if (data.totals && typeof data.totals === 'object') state.totals = data.totals;
     lsSet('ob_sessions', sessions);
     renderHome(sessions);
     applyOnlineUI();
@@ -1051,6 +1054,7 @@ function showView(name) {
     els.viewChanges.style.display = 'none';
     els.viewMcp.style.display = 'none';
     if (els.viewDevices) els.viewDevices.style.display = 'none';
+    if (els.viewProjects) els.viewProjects.style.display = 'none';
 
     if (name !== 'procs') stopProcView();
 
@@ -1135,6 +1139,12 @@ function showView(name) {
         els.sendForm.style.display = 'none';
         els.btnCmds.style.display = 'none';
         renderDevicesView();
+    } else if (name === 'projects') {
+        els.viewProjects.style.display = '';
+        els.btnBack.style.display = 'none';
+        els.sendForm.style.display = 'none';
+        els.btnCmds.style.display = 'none';
+        renderProjectsView();
     }
 
     if (els.fabNew) els.fabNew.classList.toggle('show', name === 'home');
@@ -1614,18 +1624,19 @@ function renderHome(sessions) {
             var actHtml = act === 'working' ? '<span class="sbusy" title="trabajando ahora…"></span> '
                 : (act === 'waiting' ? '<span class="sdot" title="esperando respuesta"></span> ' : '');
             var total = grp.sessions.length;
-            var shown = Math.min(total, 4);
-            var hidden = total - shown;
+            var published = Number(state.totals && state.totals[key]) || 0;
+            var remaining = published > total ? (published - total) : 0;
             html += '<div class="projsec' + (open ? ' open' : '') + '" data-folder="' + esc(key) + '">'
-                + '<button type="button" class="pshead" data-folder="' + esc(key) + '" title="' + (open ? 'Contraer' : 'Expandir') + '">'
+                + '<div class="pshead" role="button" tabindex="0" data-folder="' + esc(key) + '" title="' + (open ? 'Contraer' : 'Expandir') + '">'
                 + '<span class="chev">' + (open ? '▾' : '▸') + '</span>'
                 + '<span class="psname">' + esc(label) + '</span>'
                 + actHtml
                 + '<span class="pscount">' + total + (total === 1 ? ' sesión' : ' sesiones') + '</span>'
-                + '</button>'
+                + '<button type="button" class="psx" data-detach="' + esc(key) + '" title="Quitar del sidebar" aria-label="Quitar del sidebar">✕</button>'
+                + '</div>'
                 + '<div class="pbody">'
                 + '<div class="cards">';
-            for (var j = 0; j < shown; j++) {
+            for (var j = 0; j < total; j++) {
                 var s = grp.sessions[j];
                 var prev = s.preview ? esc(s.preview) : 'Sin mensajes aún';
                 var busy = s.state === 'working'
@@ -1637,15 +1648,15 @@ function renderHome(sessions) {
                     + '<div class="cmeta">' + busy + esc(s.model || 'sin modelo') + ' · ' + esc(s.agent || 'build') + '</div>'
                     + (s.preview ? '<div class="cpreview">' + prev + '</div>' : '')
                     + '</div>'
-                    + (isAdmin() ? '<button type="button" class="kebab" aria-label="Opciones" title="Opciones">⋮</button>' : '')
+                    + (isAdmin() && !s.importada ? '<button type="button" class="kebab" aria-label="Opciones" title="Opciones">⋮</button>' : '')
                     + '</div>';
             }
             html += '</div>';
-            html += '<div class="histrow">'
-                + '<button type="button" class="histbtn" data-folder="' + esc(key) + '">'
-                + (hidden > 0 ? 'ver historial · ' + hidden + ' más' : 'ver historial')
-                + '</button>'
-                + '<button type="button" class="histbtn filesbtn" data-folder="' + esc(key) + '" title="Archivos del proyecto">ver archivos</button>'
+            html += '<div class="histrow">';
+            if (remaining > 0) {
+                html += '<button type="button" class="histbtn morebtn" data-more="' + esc(key) + '">Ver más sesiones · ' + remaining + '</button>';
+            }
+            html += '<button type="button" class="histbtn filesbtn" data-folder="' + esc(key) + '" title="Archivos del proyecto">ver archivos</button>'
                 + '</div>';
             html += '</div></div>';
         }
@@ -1686,6 +1697,7 @@ function renderHome(sessions) {
 async function loadSessions() {
     var data = await api('api.php?action=sessions');
     if (data.ok) {
+        if (data.totals && typeof data.totals === 'object') state.totals = data.totals;
         lsSet('ob_sessions', data.sessions || []);
         renderHome(data.sessions || []);
     } else if (!state.sessions.length) {
@@ -3412,8 +3424,28 @@ els.home.addEventListener('click', function (e) {
     if (!wasOpen) openCardMenu(k);
 });
 
-// Grupos de proyectos en el home: contraer/expandir y abrir historial.
+// Grupos de proyectos en el home: contraer/expandir, ver mas sesiones y quitar.
 els.home.addEventListener('click', function (e) {
+    var x = e.target.closest('.psx');
+    if (x) {
+        e.stopPropagation();
+        detachProject(x.getAttribute('data-detach'));
+        return;
+    }
+    var more = e.target.closest('.morebtn');
+    if (more) {
+        e.stopPropagation();
+        moreSessions(more.getAttribute('data-more'));
+        return;
+    }
+    var fbtn = e.target.closest('.filesbtn');
+    if (fbtn) {
+        e.stopPropagation();
+        state.filesPath = folderToFilesPath(fbtn.getAttribute('data-folder'));
+        delete state.filesCache[state.filesPath];
+        showView('files');
+        return;
+    }
     var head = e.target.closest('.pshead');
     if (head) {
         e.stopPropagation();
@@ -3426,20 +3458,53 @@ els.home.addEventListener('click', function (e) {
         setProjectOpen(folder, nowOpen);
         return;
     }
-    var hist = e.target.closest('.histbtn');
-    if (hist && !e.target.closest('.filesbtn')) {
-        e.stopPropagation();
-        openHistory(hist.getAttribute('data-folder'));
-        return;
-    }
-    var fbtn = e.target.closest('.filesbtn');
-    if (fbtn) {
-        e.stopPropagation();
-        state.filesPath = folderToFilesPath(fbtn.getAttribute('data-folder'));
-        delete state.filesCache[state.filesPath];
-        showView('files');
-    }
 });
+
+function normFolderJs(f) {
+    return String(f || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+}
+
+function countFolderSessions(folder) {
+    var n = 0;
+    var norm = normFolderJs(folder);
+    for (var i = 0; i < state.sessions.length; i++) {
+        if (normFolderJs(state.sessions[i].folder) === norm) n++;
+    }
+    return n;
+}
+
+// Quita un proyecto del sidebar: desconecta la carpeta en el puente y el hub
+// borra al instante las sesiones importadas de esa carpeta.
+async function detachProject(folder) {
+    if (!folder) return;
+    if (!confirm('¿Quitar "' + (projectLabel(folder) || folder) + '" del sidebar?\nEl hub deja de recibir sus sesiones.')) return;
+    var res = await fetch('api.php?action=folder_detach', apiCsrf('POST', { folder: folder }))
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { ok: false, error: 'network' }; });
+    if (!res.ok) { toast(res.error || 'no se pudo quitar el proyecto', 'error'); return; }
+    toast('proyecto quitado', 'ok');
+    await loadSessions();
+}
+
+// Pide al puente 4 sesiones mas de un proyecto y refresca hasta que lleguen.
+async function moreSessions(folder) {
+    if (!folder) return;
+    var before = countFolderSessions(folder);
+    var res = await fetch('api.php?action=folder_more', apiCsrf('POST', { folder: folder, step: 4 }))
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { ok: false, error: 'network' }; });
+    if (!res.ok) { toast(res.error || 'no se pudo pedir mas sesiones', 'error'); return; }
+    toast('pidiendo mas sesiones…', 'ok');
+    var tries = 0;
+    var timer = setInterval(async function () {
+        tries++;
+        await loadSessions();
+        if (countFolderSessions(folder) > before || tries >= 8) {
+            clearInterval(timer);
+            if (countFolderSessions(folder) <= before) toast('no hay mas sesiones', 'error');
+        }
+    }, 2000);
+}
 
 els.cardMenu.addEventListener('click', async function (e) {
     var it = e.target.closest('.item');
@@ -3668,6 +3733,55 @@ async function revokeDevice(id) {
         .catch(function () { return { ok: false, error: 'network' }; });
     if (!res.ok) { alert(res.error || 'no se pudo desvincular'); return; }
     loadDevices();
+}
+
+// ---------------------------------------------------------------------------
+// Proyectos: conectar/desconectar carpetas del workspace. Sin proyectos
+// conectados el hub arranca en blanco; al conectar uno se publican sus ultimas
+// sesiones (config sessionIndexLimit, default 4).
+// ---------------------------------------------------------------------------
+function renderProjectsView() {
+    els.hTitle.textContent = 'proyectos';
+    els.hSub.textContent = 'conecta carpetas del workspace';
+    var cat = state.catalog || {};
+    var folders = Array.isArray(cat.folders) ? cat.folders : [];
+    var head = '<div class="view-head"><h2>proyectos</h2>'
+        + '<div class="view-sub">Conecta una carpeta para ver sus ultimas sesiones en el sidebar. Sin proyectos conectados, el hub queda en blanco.</div></div>';
+    if (!folders.length) {
+        els.viewProjects.innerHTML = head + '<div class="placeholder">El puente no informo carpetas del workspace.</div>';
+        return;
+    }
+    var html = head + '<div id="projList">';
+    for (var i = 0; i < folders.length; i++) {
+        var f = folders[i];
+        if (!f || typeof f !== 'object') continue;
+        var on = !!f.active;
+        html += '<div class="device"><span class="dot"' + (on ? '' : ' style="background:var(--muted)"') + '></span>'
+            + '<b>' + esc(f.name || baseName(f.path)) + '</b>'
+            + '<span class="dnote">' + esc(f.path || '') + '</span>'
+            + '<button type="button" class="linkbtn" data-toggle="' + (on ? 'detach' : 'attach')
+            + '" data-folder="' + esc(f.path) + '">' + (on ? 'desconectar' : 'conectar') + '</button></div>';
+    }
+    html += '</div>';
+    els.viewProjects.innerHTML = html;
+    var btns = els.viewProjects.querySelectorAll('[data-toggle]');
+    for (var j = 0; j < btns.length; j++) {
+        btns[j].addEventListener('click', function () {
+            toggleProject(this.getAttribute('data-folder'), this.getAttribute('data-toggle'));
+        });
+    }
+}
+
+async function toggleProject(folder, mode) {
+    if (!folder) return;
+    var action = mode === 'attach' ? 'folder_attach' : 'folder_detach';
+    var res = await fetch('api.php?action=' + action, apiCsrf('POST', { folder: folder }))
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { ok: false, error: 'network' }; });
+    if (!res.ok) { alert(res.error || 'no se pudo cambiar el proyecto'); return; }
+    // El hub refleja el estado ya; el puente confirma y republica en unos segundos.
+    await refreshBridgeData();
+    renderProjectsView();
 }
 
 function chgStatusClass(st) {

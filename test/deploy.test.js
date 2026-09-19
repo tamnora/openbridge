@@ -27,6 +27,15 @@ test('deploy: parseArgs reconoce comandos y flags', async () => {
     assert.equal(o.keepData, false);
     assert.equal(o.yes, true);
 
+    o = parseArgs(['clean', '--wipe-data', '--no-reset-bridge']);
+    assert.equal(o.cmd, 'clean');
+    assert.equal(o.wipeData, true);
+    assert.equal(o.noResetBridge, true);
+
+    o = parseArgs(['clean']);
+    assert.equal(o.cmd, 'clean');
+    assert.equal(o.noResetBridge, false);
+
     o = parseArgs(['restore', 'backups/host/2026']);
     assert.equal(o.cmd, 'restore');
     assert.deepEqual(o.positional, ['backups/host/2026']);

@@ -18,7 +18,9 @@
 //   push <archivo...>  sube SOLO los archivos indicados (relativos a php/dist)
 //   backup            descarga app.json + data/** a backups/<host>/<fecha>/
 //   restore <carpeta>  sube un backup local al server
-//   reset             backup, wipe total y re-sube php/dist completo
+//   reset             re-sube php/dist (app.json intacto); con --wipe-data
+//                     vacia .openbridge/data con borrado directo (no descarga)
+//   clean             borra la basura de .openbridge/data (conserva la auth)
 //   prune             borra archivos remotos no gestionados (ej. un .zip viejo)
 //   chmod             fija 0755 en .openbridge y .openbridge/data
 //   init              primer deploy en un server vacio
@@ -28,9 +30,11 @@
 //   --data            sync/restore: permite subir/sobrescribir .openbridge/app.json
 //   --data-all        ademas incluye .openbridge/data/** (mensajes, sesiones, ...)
 //   --prune           sync: borra ademas los archivos no gestionados
-//   --keep-data       reset (default): restaura app.json + data del backup
-//   --wipe-data       reset: deja .openbridge/data vacio (server limpio)
-//   --no-backup       reset: no hace backup antes de borrar (peligroso)
+//   --keep-data       reset (default): conserva .openbridge/data
+//   --wipe-data       reset/clean: borra TODO .openbridge/data (conserva auth)
+//                     y deja un marcador para que el puente desconecte los
+//                     proyectos (hub en blanco)
+//   --no-reset-bridge  reset/clean --wipe-data: no escribir el marcador de reset
 //   --all, -a         backup: descarga el docroot completo, no solo los datos
 //   --insecure, -k    no validar el certificado TLS (equivalente a DEPLOY_INSECURE)
 //   --no-build        no corre scripts/build-php-hub.mjs
@@ -108,9 +112,9 @@ export function parseArgs(argv) {
         cmd: null, positional: [], data: false, dataAll: false, prune: false,
         keepData: true, wipeData: false, noBackup: false, all: false,
         dryRun: false, yes: false, noBuild: false, insecure: false,
-        host: null, help: false,
+        host: null, help: false, noResetBridge: false,
     };
-    const commands = new Set(['status', 'sync', 'push', 'backup', 'restore', 'reset', 'prune', 'chmod', 'init', 'help']);
+    const commands = new Set(['status', 'sync', 'push', 'backup', 'restore', 'reset', 'clean', 'prune', 'chmod', 'init', 'help']);
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--data') o.data = true;
@@ -118,6 +122,7 @@ export function parseArgs(argv) {
         else if (a === '--prune') o.prune = true;
         else if (a === '--keep-data') { o.keepData = true; o.wipeData = false; }
         else if (a === '--wipe-data') { o.wipeData = true; o.keepData = false; }
+        else if (a === '--no-reset-bridge') o.noResetBridge = true;
         else if (a === '--no-backup') o.noBackup = true;
         else if (a === '--all' || a === '-a') o.all = true;
         else if (a === '--dry-run' || a === '-n') o.dryRun = true;
@@ -328,6 +333,13 @@ function writeManifest(cfg, files) {
 // hasta tener el nuevo completo.
 const CHUNK = 7000;
 
+// Archivos de data que se conservan en un `clean`/`reset` (auth y push). El
+// resto es basura que el puente regenera (mensajes, fetch, indices, colas).
+const DATA_KEEP = new Set(['bridges.json', 'push.json', 'pairings.json', '.reset']);
+// El hosting aborta transferencias grandes con `451`; no bajamos archivos mas
+// pesados que esto en un backup (antes colgaba con fetch-*.json de MB).
+const MAX_BACKUP_BYTES = 1024 * 1024;
+
 function remoteSize(cfg, rel) {
     const r = curl(cfg, ['-I', ftpUrl(cfg, remoteAbs(cfg, rel))]);
     if (!r.ok) return -1;
@@ -379,6 +391,65 @@ function uploadFile(cfg, rel, abs) {
 function deleteFile(cfg, rel) {
     const rootUrl = ftpUrl(cfg, remoteAbs(cfg, ''), true);
     return curl(cfg, ['-Q', 'DELE ' + remoteAbs(cfg, rel), rootUrl]);
+}
+
+// Borra varios archivos en pocas conexiones (varios `DELE` por sesion FTP). El
+// borrado dirigido evita el `remoteWalk` recursivo y la descarga que colgaban.
+function deleteFiles(cfg, rels) {
+    if (!rels.length) return { ok: true, count: 0, errors: 0 };
+    if (cfg.dryRun) return { ok: true, count: rels.length, errors: 0 };
+    const rootUrl = ftpUrl(cfg, remoteAbs(cfg, ''), true);
+    const BATCH = 100;
+    let count = 0, errors = 0;
+    for (let i = 0; i < rels.length; i += BATCH) {
+        const batch = rels.slice(i, i + BATCH);
+        const args = [];
+        for (const rel of batch) args.push('-Q', 'DELE ' + remoteAbs(cfg, rel));
+        args.push(rootUrl);
+        const r = curl(cfg, args);
+        if (r.ok) count += batch.length;
+        else errors += batch.length;
+    }
+    return { ok: errors === 0, count, errors };
+}
+
+// Lista los archivos de `.openbridge/data` (sin recursión) y devuelve cuáles
+// borraría según `wipeAll`.
+function planDataClean(cfg, wipeAll) {
+    let entries = [];
+    try { entries = listDir(cfg, DATA_DIR); } catch (e) { return { files: [], del: [], error: e.message }; }
+    const files = entries
+        .filter((e) => e.type !== 'd' && e.name !== '.' && e.name !== '..')
+        .map((e) => e.name);
+    const del = files.filter((f) => wipeAll || !DATA_KEEP.has(f));
+    return { files, del };
+}
+
+// Borrado dirigido de `.openbridge/data`: conserva la auth salvo `--all`.
+function cleanData(cfg, o, wipeAll) {
+    const plan = planDataClean(cfg, wipeAll);
+    if (plan.error) return { ok: false, count: 0, errors: 0, total: 0, error: plan.error };
+    const res = deleteFiles(cfg, plan.del.map((f) => DATA_DIR + '/' + f));
+    // Tras un wipe, deja el marcador para que el puente desconecte los
+    // proyectos y el hub quede en blanco (el puente lo borra al confirmar).
+    if (res.ok && wipeAll && !o.noResetBridge) writeResetMarker(cfg);
+    return { ok: res.ok, count: res.count, errors: res.errors, total: plan.files.length };
+}
+
+// Sube `.openbridge/data/.reset` con la fecha. El puente lo ve en el poll,
+// limpia sus carpetas activas y responde `reset_ack`.
+function writeResetMarker(cfg) {
+    if (cfg.dryRun) return true;
+    const tmp = path.join(os.tmpdir(), 'ob-reset-' + process.pid + '.marker');
+    try {
+        fs.writeFileSync(tmp, new Date().toISOString() + '\n');
+        const r = uploadFile(cfg, DATA_DIR + '/.reset', tmp);
+        return r.ok;
+    } catch (e) {
+        return false;
+    } finally {
+        try { fs.rmSync(tmp, { force: true }); } catch { /* noop */ }
+    }
 }
 
 function removeDir(cfg, rel) {
@@ -450,11 +521,17 @@ function backup(cfg, o, scopeAll) {
         : remoteWalk(cfg, '.openbridge', { skipData: false });
     let count = 0;
     const failed = [];
+    const skipped = [];
     for (const rel of [...remote.files.keys()].sort()) {
         if (!scopeAll && !(posix(rel) === APP_JSON || isDataPath(rel))) continue;
+        const info = remote.files.get(rel) || {};
+        if ((info.size || 0) > MAX_BACKUP_BYTES) {
+            skipped.push(rel + ' (' + info.size + ' bytes)');
+            continue;
+        }
         const localFile = path.join(dest, rel);
         fs.mkdirSync(path.dirname(localFile), { recursive: true });
-        const r = curl(cfg, ['--create-dirs', '-o', localFile, ftpUrl(cfg, remoteAbs(cfg, rel))]);
+        const r = curl(cfg, ['--create-dirs', '--max-time', '120', '-o', localFile, ftpUrl(cfg, remoteAbs(cfg, rel))]);
         if (r.ok) count++;
         else failed.push(rel + ' (' + r.err + ')');
     }
@@ -462,10 +539,10 @@ function backup(cfg, o, scopeAll) {
         fs.mkdirSync(dest, { recursive: true });
         fs.writeFileSync(path.join(dest, 'backup-meta.json'), JSON.stringify({
             host: cfg.host, remote: cfg.remote, date: new Date().toISOString(),
-            scope: scopeAll ? 'all' : 'data', files: count,
+            scope: scopeAll ? 'all' : 'data', files: count, skipped,
         }, null, 2) + '\n');
     }
-    return { dest, count, failed };
+    return { dest, count, failed, skipped };
 }
 
 function collectLocal(cfg, o) {
@@ -670,68 +747,69 @@ async function cmdRestore(cfg, o) {
     return 0;
 }
 
+// Reset dirigido: re-sube el codigo y, con `--wipe-data`, vacia `.openbridge/
+// data` con borrado directo (sin bajar archivos ni recorrer todo el docroot).
+// Conserva siempre `app.json` (login) y, salvo `--wipe-data`, la auth del puente.
 async function cmdReset(cfg, o) {
     requireConn(cfg);
     requireLocal(cfg);
     if (!o.noBuild) build();
-    const local = collectLocal(cfg, { data: true, dataAll: true });
-    console.log('\n  OpenBridge deploy — reset');
-    console.log('  wipe total de ' + cfg.remote + ' + re-sube ' + local.size + ' archivos');
-    console.log('  datos: ' + (o.wipeData ? 'SE BORRAN (--wipe-data)' : 'se conservan (backup + restore)'));
-
-    let backupRes = null;
-    if (!o.noBackup && !o.dryRun) {
-        backupRes = backup(cfg, o, false);
-        console.log('  backup: ' + backupRes.count + ' archivos -> ' + path.relative(root, backupRes.dest));
-    } else if (!o.noBackup && o.dryRun) {
-        console.log('  backup: (dry-run)');
-    } else {
-        console.log('  backup: OMITIDO (--no-backup)');
-    }
+    const local = collectLocal(cfg, o);
+    const plan = planDataClean(cfg, o.wipeData);
+    console.log('\n  OpenBridge deploy — reset (dirigido)');
+    console.log('  codigo : re-sube ' + local.size + ' archivos (app.json intacto)');
+    console.log('  data   : ' + plan.files.length + ' archivos; '
+        + (o.wipeData ? 'se vacian TODOS (--wipe-data)' : 'se conservan ' + [...DATA_KEEP].join(', ')));
+    if (plan.error) fail('no pude listar ' + DATA_DIR + ': ' + plan.error);
 
     if (o.dryRun) {
-        console.log('\n  dry-run: plan de reset listo; no se toco el server.\n');
+        console.log('\n  dry-run: no se toco el server.\n');
         return 0;
     }
-    const ok = await guardDestructive(o, 'Borrar TODO el docroot y re-subir php/dist');
+    const ok = await guardDestructive(o, 'Reset del hub: re-subir codigo' + (o.wipeData ? ' y vaciar data' : ''));
     if (!ok) fail('cancelado por el usuario.');
 
-    const remote = remoteWalk(cfg, '', { skipData: false });
-    const errors = [];
-    let del = 0;
-    for (const rel of remote.files.keys()) {
-        if (shouldNeverTouch(rel)) continue;
-        const r = deleteFile(cfg, rel);
-        if (r.ok) del++;
-        else errors.push(rel + ': ' + r.err);
+    if (o.wipeData) {
+        const res = cleanData(cfg, o, true);
+        console.log('  data   : borrados ' + res.count + ', errores ' + res.errors);
+        if (!res.ok) fail('no pude vaciar la data');
     }
-    const dirs = [...remote.dirs].sort((a, b) => b.split('/').length - a.split('/').length);
-    for (const rel of dirs) {
-        if (shouldNeverTouch(rel)) continue;
-        removeDir(cfg, rel);
-    }
+
     let up = 0;
-    const failed = new Set();
+    const errors = [];
     for (const rel of [...local.keys()].sort()) {
         process.stdout.write('    ^ ' + rel + '\n');
         const r = uploadFile(cfg, rel, local.get(rel).abs);
         if (r.ok) up++;
-        else { errors.push(rel + ': ' + r.err); failed.add(rel); }
-    }
-    if (o.keepData && backupRes) {
-        const files = walkBackupFiles(backupRes.dest);
-        for (const rel of files) {
-            const r = uploadFile(cfg, rel, path.join(backupRes.dest, rel));
-            if (r.ok) up++;
-            else errors.push(rel + ': ' + r.err);
-        }
+        else errors.push(rel + ': ' + r.err);
     }
     ensureDataDir(cfg);
     chmodData(cfg);
-    writeManifest(cfg, new Map([...local].filter(([rel]) => !failed.has(rel))));
-    console.log('\n  borrados ' + del + ', subidos ' + up + ', errores ' + errors.length + '\n');
+    writeManifest(cfg, new Map([...local]));
+    console.log('\n  subidos ' + up + ', errores ' + errors.length + '\n');
     if (errors.length) { console.error('  ' + errors.join('\n  ')); return 1; }
     return 0;
+}
+
+// Limpieza dirigida de `.openbridge/data`: borra la basura (mensajes, fetch,
+// indices, colas) sin tocar la auth. Con `--wipe-data` borra todo.
+async function cmdClean(cfg, o) {
+    requireConn(cfg);
+    const plan = planDataClean(cfg, o.wipeData);
+    console.log('\n  OpenBridge deploy — clean');
+    if (plan.error) fail('no pude listar ' + DATA_DIR + ': ' + plan.error);
+    console.log('  data   : ' + plan.files.length + ' archivos; borrar ' + plan.del.length
+        + (o.wipeData ? ' (--wipe-data: todo)' : ' (conservo ' + [...DATA_KEEP].join(', ') + ')'));
+    if (o.dryRun) {
+        console.log('  (dry-run)\n');
+        return 0;
+    }
+    const ok = await guardDestructive(o, 'Borrar ' + plan.del.length + ' archivos de ' + DATA_DIR);
+    if (!ok) fail('cancelado por el usuario.');
+    const res = deleteFiles(cfg, plan.del.map((f) => DATA_DIR + '/' + f));
+    if (res.ok && o.wipeData && !o.noResetBridge) writeResetMarker(cfg);
+    console.log('  borrados ' + res.count + ', errores ' + res.errors + '\n');
+    return res.ok ? 0 : 1;
 }
 
 async function cmdPrune(cfg, o) {
@@ -817,7 +895,7 @@ async function main() {
     cfg.dryRun = o.dryRun;
     const commands = {
         status: cmdStatus, sync: cmdSync, push: cmdPush, backup: cmdBackup,
-        restore: cmdRestore, reset: cmdReset, prune: cmdPrune, chmod: cmdChmod, init: cmdInit,
+        restore: cmdRestore, reset: cmdReset, clean: cmdClean, prune: cmdPrune, chmod: cmdChmod, init: cmdInit,
     };
     const fn = commands[o.cmd];
     if (!fn) fail('comando desconocido: ' + o.cmd);

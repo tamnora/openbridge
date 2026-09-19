@@ -267,6 +267,7 @@ async function handleApi(ctx) {
                 bridge,
                 bridges: await store.bridgesSummary(),
                 sessions: await store.sessionsListFull(),
+                totals: await store.sessionIndexTotals(bridge),
                 online_ts: overlay.last_online_ts || '',
             };
             if (changed) out.catalog = overlay;
@@ -274,7 +275,8 @@ async function handleApi(ctx) {
         }
         case 'sessions': {
             if (!auth.requireLogin(app, req, res)) return;
-            return ok({ ok: true, sessions: await store.sessionsListFull() });
+            const bridge = await webBridge(req, query);
+            return ok({ ok: true, sessions: await store.sessionsListFull(), totals: await store.sessionIndexTotals(bridge) });
         }
         case 'session_create': {
             if (!auth.requireLogin(app, req, res)) return;
@@ -290,6 +292,7 @@ async function handleApi(ctx) {
             if (!(await store.agentInCatalog(agent, file))) return ok({ ok: false, error: 'Agente no disponible' }, 400);
             if (Array.from(name).length > 60) return ok({ ok: false, error: 'Nombre demasiado largo' }, 400);
             const id = await store.addSession(name, folder, model, agent, null, bridge);
+            await store.enqueueCommand('folder_attach', [folder], file);
             return ok({ ok: true, session: await store.getSession(id) });
         }
         case 'session_delete': {
@@ -421,9 +424,9 @@ async function handleApi(ctx) {
             const folders = [];
             for (const f of (Array.isArray(body.folders) ? body.folders : [])) {
                 if (f && typeof f === 'object' && f.name !== undefined && f.path !== undefined) {
-                    folders.push({ name: store.mbSubstr(String(f.name), 0, 60), path: store.mbSubstr(String(f.path), 0, 500) });
+                    folders.push({ name: store.mbSubstr(String(f.name), 0, 60), path: store.mbSubstr(String(f.path), 0, 500), active: !!f.active });
                 } else if (typeof f === 'string') {
-                    folders.push({ name: store.mbSubstr(f, 0, 60), path: store.mbSubstr(f, 0, 500) });
+                    folders.push({ name: store.mbSubstr(f, 0, 60), path: store.mbSubstr(f, 0, 500), active: false });
                 }
             }
             const models = (Array.isArray(body.models) ? body.models : [])
@@ -483,7 +486,7 @@ async function handleApi(ctx) {
         case 'index_sync': {
             if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
             const bridge = reqBridge(req, query);
-            const count = await store.sessionIndexSync(bridge, body.sessions);
+            const count = await store.sessionIndexSync(bridge, body.sessions, body.totals);
             return ok({ ok: true, count });
         }
         case 'history_ready': {
@@ -527,6 +530,44 @@ async function handleApi(ctx) {
             if (!store.validFolderName(name)) return ok({ ok: false, error: 'Nombre invalido (solo letras, numeros, espacios, - _ . () y 3-50 caracteres)' }, 400);
             const id = await store.catalogAddRequest(name, file);
             return ok({ ok: true, request: { id, name } });
+        }
+        case 'folder_attach':
+        case 'folder_detach': {
+            const s = auth.requireCsrf(app, req, res);
+            if (!s) return;
+            if (s.role !== 'admin') return ok({ ok: false, error: 'Permiso insuficiente' }, 403);
+            const bridge = bodyBridge(req, query, body) || await webBridge(req, query);
+            const file = paths.bridgeCatalogFile(bridge);
+            const folder = String(body.folder || '').trim();
+            if (folder === '') return ok({ ok: false, error: 'Falta la carpeta' }, 400);
+            const active = action === 'folder_attach';
+            if (active && (await store.folderPathInCatalog(folder, file)) === null) {
+                return ok({ ok: false, error: 'Carpeta no disponible' }, 400);
+            }
+            await store.catalogModify(file, (cat) => {
+                for (const f of (cat.folders || [])) {
+                    if (f && typeof f === 'object' && f.path === folder) f.active = active;
+                }
+            });
+            const id = await store.enqueueCommand(active ? 'folder_attach' : 'folder_detach', [folder], file);
+            // Al desconectar, saca ya del sidebar las sesiones importadas de esa
+            // carpeta (el puente confirma y republica el indice igual).
+            const pruned = active ? 0 : await store.sessionPruneFolder(folder, bridge);
+            return ok({ ok: true, id, folder, active, pruned });
+        }
+        case 'folder_more': {
+            const s = auth.requireCsrf(app, req, res);
+            if (!s) return;
+            if (s.role !== 'admin') return ok({ ok: false, error: 'Permiso insuficiente' }, 403);
+            const bridge = bodyBridge(req, query, body) || await webBridge(req, query);
+            const file = paths.bridgeCatalogFile(bridge);
+            const folder = String(body.folder || '').trim();
+            if (folder === '') return ok({ ok: false, error: 'Falta la carpeta' }, 400);
+            let step = parseInt(body.step, 10) || 4;
+            if (step < 1) step = 4;
+            if (step > 50) step = 50;
+            const id = await store.enqueueCommand('folder_more', [folder, step], file);
+            return ok({ ok: true, id, folder, step });
         }
         case 'push_subscribe': {
             if (!auth.requireLogin(app, req, res)) return;
@@ -608,7 +649,13 @@ async function handleApi(ctx) {
             }
             const foldersToCreate = lite ? [] : await store.catalogClaimRequests(file);
             const commands = await store.claimCommands(file);
-            return ok({ ok: true, messages: claimed, folders: foldersToCreate, commands, known_oc: [] });
+            const reset = await store.bridgeResetPending();
+            return ok({ ok: true, messages: claimed, folders: foldersToCreate, commands, known_oc: [], reset });
+        }
+        case 'reset_ack': {
+            if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
+            await store.bridgeResetClear();
+            return ok({ ok: true });
         }
         case 'folder_done': {
             if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);
@@ -785,6 +832,7 @@ async function handleApi(ctx) {
             if (model !== '' && !(await store.modelInCatalog(model, file))) return ok({ ok: false, error: 'Modelo no disponible' }, 400);
             if (agent !== '' && !(await store.agentInCatalog(agent, file))) return ok({ ok: false, error: 'Agente no disponible' }, 400);
             const id = await store.addSession(name !== '' ? name : 'Opencode ' + oc.slice(0, 8), folder, model, agent, oc, bridge);
+            if (folder !== '') await store.enqueueCommand('folder_attach', [folder], file);
             return ok({ ok: true, session: await store.getSession(id) });
         }
         case 'search_index': {

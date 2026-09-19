@@ -223,6 +223,9 @@ function loadConfig() {
                 foldersFile: 'folders.json',
                 workspace: '',
                 allowCreateFolders: false,
+                // Cuantas sesiones recientes publica el indice por proyecto
+                // conectado (el hub arranca en blanco y se conectan a mano).
+                sessionIndexLimit: 4,
                 models: [],
                 agents: ['build', 'plan'],
                 bridgeId: '',
@@ -272,6 +275,117 @@ function readFolders() {
 
 function writeFolders(list) {
     fs.writeFileSync(foldersFilePath(), JSON.stringify({ folders: list }, null, 2));
+}
+
+// Una carpeta esta "conectada" solo si su flag active es true. Los folders.json
+// viejos (sin flag) arrancan inactivos: el hub queda en blanco hasta que el
+// usuario conecta un proyecto desde la web.
+function folderIsActive(f) {
+    return !!(f && typeof f !== 'string' && f.active === true);
+}
+
+// Normaliza una ruta para comparar carpetas (mismo criterio que el hub).
+function normFolder(f) {
+    return String(f || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+}
+function sameFolder(a, b) {
+    return normFolder(a) === normFolder(b);
+}
+
+// Limite de sesiones publicadas de una carpeta (0 = usar el global).
+function folderLimitOf(f) {
+    const n = (f && typeof f === 'object' && Number(f.limit) > 0) ? Math.floor(Number(f.limit)) : 0;
+    return n > 0 ? Math.min(200, n) : 0;
+}
+
+// Carpetas conectadas (activas) que todavia existen en disco, con su limite.
+function activeFolderEntries() {
+    const out = [];
+    for (const f of readFolders()) {
+        const p = typeof f === 'string' ? f : (f && f.path);
+        if (!p || !folderIsActive(f)) continue;
+        try { if (!fs.statSync(p).isDirectory()) continue; } catch (e) { continue; }
+        out.push({ path: p, limit: folderLimitOf(f) });
+    }
+    return out;
+}
+
+// Rutas de las carpetas conectadas (activas) que todavia existen en disco.
+function activeFolders() {
+    return activeFolderEntries().map((e) => e.path);
+}
+
+// Marca/desmarca una carpeta como conectada (la agrega a folders.json si no
+// estaba). Devuelve la ruta absoluta o '' si el path es invalido.
+function setFolderActive(folderPath, active) {
+    const p = String(folderPath || '').trim();
+    if (!p) return '';
+    let abs;
+    try { abs = path.resolve(p); } catch (e) { return ''; }
+    const list = readFolders();
+    let idx = -1;
+    for (let i = 0; i < list.length; i++) {
+        const fp = typeof list[i] === 'string' ? list[i] : (list[i] && list[i].path);
+        if (fp && path.resolve(fp) === abs) { idx = i; break; }
+    }
+    if (idx >= 0) {
+        const cur = list[idx];
+        const next = {
+            name: (cur && typeof cur === 'object' && cur.name) ? cur.name : path.basename(abs),
+            path: abs,
+            active: !!active,
+        };
+        if (active && cur && typeof cur === 'object' && Number(cur.limit) > 0) next.limit = Math.floor(Number(cur.limit));
+        list[idx] = next;
+    } else {
+        list.push({ name: path.basename(abs), path: abs, active: !!active });
+    }
+    writeFolders(list);
+    return abs;
+}
+
+// Sube el limite de sesiones publicadas de una carpeta conectada (boton "Ver
+// mas sesiones"). Devuelve el limite nuevo o 0 si el path es invalido.
+function bumpFolderLimit(folderPath, step) {
+    const p = String(folderPath || '').trim();
+    if (!p) return 0;
+    let abs;
+    try { abs = path.resolve(p); } catch (e) { return 0; }
+    const def = Math.max(1, Math.min(200, parseInt(config.sessionIndexLimit, 10) || 4));
+    const inc = Math.max(1, parseInt(step, 10) || def);
+    const list = readFolders();
+    let idx = -1;
+    for (let i = 0; i < list.length; i++) {
+        const fp = typeof list[i] === 'string' ? list[i] : (list[i] && list[i].path);
+        if (fp && path.resolve(fp) === abs) { idx = i; break; }
+    }
+    if (idx < 0) {
+        list.push({ name: path.basename(abs), path: abs, active: true, limit: inc });
+        writeFolders(list);
+        return inc;
+    }
+    const cur = list[idx];
+    const prev = folderLimitOf(cur) || def;
+    const next = Math.max(1, Math.min(200, prev + inc));
+    list[idx] = {
+        name: (cur && typeof cur === 'object' && cur.name) ? cur.name : path.basename(abs),
+        path: abs,
+        active: true,
+        limit: next,
+    };
+    writeFolders(list);
+    return next;
+}
+
+// Desconecta todas las carpetas (reset del hub): el puente deja de publicar
+// sesiones hasta que el usuario vuelva a conectar un proyecto.
+function clearActiveFolders() {
+    const list = readFolders().map((f) => {
+        if (typeof f === 'string') return { name: path.basename(f), path: path.resolve(f), active: false };
+        return { name: (f && f.name) || path.basename((f && f.path) || ''), path: (f && f.path) || '', active: false };
+    });
+    writeFolders(list);
+    return list.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,11 +1299,8 @@ function createRemoteFolder(name) {
     if (!fs.existsSync(workspace)) throw new Error('el espacio de trabajo no existe: ' + workspace);
     const dir = path.join(workspace, clean);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-    let list = readFolders();
-    if (!list.some((f) => f && f.path === dir)) {
-        list.push({ name: clean, path: dir });
-        writeFolders(list);
-    }
+    // Una carpeta creada desde la web queda conectada de una.
+    setFolderActive(dir, true);
     return { name: clean, path: dir };
 }
 
@@ -1206,31 +1317,113 @@ async function handleFolderRequest(req) {
     }
 }
 
+// Conectar/desconectar un proyecto desde la web. Al conectar se publica de una
+// el indice (ultimas sesiones) y el catalogo para que aparezca en el sidebar.
+async function handleFolderToggle(cmd, active) {
+    const target = String((cmd.args && cmd.args[0]) || '').trim();
+    if (!target) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: 'falta la carpeta' }, cmd._t);
+        return;
+    }
+    const abs = setFolderActive(target, active);
+    if (!abs) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: 'carpeta invalida' }, cmd._t);
+        return;
+    }
+    try {
+        await pushSessionIndex(cmd._t);
+        await syncCatalog({ silent: true });
+    } catch (e) {
+        log('aviso: no pude refrescar tras ' + (active ? 'conectar' : 'desconectar') + ' ' + abs + ': ' + e.message);
+    }
+    await api('command_done', {
+        id: cmd.id,
+        ok: true,
+        text: JSON.stringify({ folder: abs, active: !!active }),
+        error: '',
+    }, cmd._t);
+    log('carpeta ' + (active ? 'conectada' : 'desconectada') + ': ' + abs);
+}
+
+// "Ver mas sesiones": sube el limite publicado de una carpeta conectada y
+// republica el indice para que el hub importe las siguientes.
+async function handleFolderMore(cmd) {
+    const target = String((cmd.args && cmd.args[0]) || '').trim();
+    const step = parseInt((cmd.args && cmd.args[1]), 10) || (parseInt(config.sessionIndexLimit, 10) || 4);
+    if (!target) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: 'falta la carpeta' }, cmd._t);
+        return;
+    }
+    const limit = bumpFolderLimit(target, step);
+    if (!limit) {
+        await api('command_done', { id: cmd.id, ok: false, text: '', error: 'carpeta invalida' }, cmd._t);
+        return;
+    }
+    try { await pushSessionIndex(cmd._t); } catch (e) {
+        log('aviso: no pude refrescar tras pedir mas sesiones de ' + target + ': ' + e.message);
+    }
+    await api('command_done', {
+        id: cmd.id,
+        ok: true,
+        text: JSON.stringify({ folder: target, limit: limit }),
+        error: '',
+    }, cmd._t);
+    log('mas sesiones: ' + target + ' (limite ' + limit + ')');
+}
+
+// Reset pedido por el hub: desconecta todos los proyectos para que el sidebar
+// quede en blanco. Confirma con reset_ack (el hub borra el marcador).
+async function handleBridgeReset() {
+    const n = clearActiveFolders();
+    log('reset del hub: ' + n + ' proyecto(s) desconectado(s)');
+    for (const t of activeTargets()) {
+        try { await api('reset_ack', {}, t); } catch (e) { /* el poll reintenta */ }
+    }
+    try { await pushSessionIndex(); } catch (e) { /* noop */ }
+    try { await syncCatalog({ silent: true }); } catch (e) { /* noop */ }
+}
+
 // ---------------------------------------------------------------------------
 // Sincronizar catálogo (carpetas + modelos + workspace + flags + agentes)
 // ---------------------------------------------------------------------------
 async function syncCatalog(opts) {
     try {
-        // Solo carpetas principales del workspace (nivel 1): el dropdown de
-        // "nueva sesión" queda limpio y el catálogo liviano. Los chats viejos
-        // conservan su carpeta aunque ya no esté en la lista.
-        let folders = readFolders();
+        // El catalogo ofrece las carpetas nivel 1 del workspace + las que el
+        // usuario ya conecto (aunque esten mas profundo), cada una con su flag
+        // `active`. El sidebar solo muestra las conectadas con sesiones.
+        const activeByPath = new Map();
+        for (const f of readFolders()) {
+            const p = typeof f === 'string' ? f : (f && f.path);
+            if (p) activeByPath.set(path.resolve(p), folderIsActive(f));
+        }
+        let folders = [];
         if (config.workspace) {
             const root = path.resolve(config.workspace);
-            folders = folders.filter((f) => {
-                const p = typeof f === 'string' ? f : f.path;
-                if (!p) return false;
+            const seen = new Set();
+            const push = (name, p) => {
+                let abs;
+                try { abs = path.resolve(p); } catch (e) { return; }
+                if (seen.has(abs)) return;
+                seen.add(abs);
+                folders.push({ name: name || path.basename(abs), path: abs, active: !!activeByPath.get(abs) });
+            };
+            // Primero las conectadas dentro del workspace (no se pierden aunque
+            // esten por debajo del nivel 1).
+            for (const [abs, active] of activeByPath) {
+                if (!active) continue;
                 try {
-                    const rel = path.relative(root, path.resolve(p));
-                    if (!rel || rel.split(path.sep).includes('..')) return false;
-                    return !rel.includes(path.sep); // solo nivel 1
-                } catch (e) { return false; }
-            });
+                    const rel = path.relative(root, abs);
+                    if (!rel || rel.split(path.sep).includes('..')) continue;
+                    if (!fs.statSync(abs).isDirectory()) continue;
+                } catch (e) { continue; }
+                push(path.basename(abs), abs);
+            }
             try {
                 const discovered = listWorkspaceFolders(config.workspace); // depth 1
-                const known = new Set(folders.map((f) => (typeof f === 'string' ? f : f.path)));
                 for (const d of discovered) {
-                    if (!known.has(d.path)) folders.push({ name: d.name, path: d.path });
+                    const rel = path.relative(root, path.resolve(d.path));
+                    if (!rel || rel.split(path.sep).includes('..') || rel.includes(path.sep)) continue;
+                    push(d.name, d.path);
                 }
             } catch (e) {
                 log('aviso: no pude escanear el workspace: ' + e.message);
@@ -1564,28 +1757,74 @@ async function sessionHistory(cmd) {
     }
 }
 
-// Indice liviano de sesiones del workspace (id, titulo, carpeta, updated).
+// Lista las sesiones de un proyecto en JSON (trae `directory` y `updated` en
+// epoch ms), que permite agrupar por proyecto real y ordenar por recencia.
+// Fallback al parseo de tabla si la version de opencode no soporta --format.
+async function listSessionsJson(folder) {
+    const r = await runCli(['session', 'list', '--format', 'json'], { cwd: folder, timeout: 30000 });
+    if (r.ok && r.text) {
+        try {
+            const arr = JSON.parse(r.text);
+            if (Array.isArray(arr)) {
+                const out = [];
+                for (const s of arr) {
+                    const id = s && typeof s.id === 'string' ? s.id : '';
+                    if (!/^ses_[A-Za-z0-9]{4,64}$/.test(id)) continue;
+                    const upd = Number(s.updated) || 0;
+                    out.push({
+                        id,
+                        title: String(s.title || ''),
+                        folder: String(s.directory || folder || ''),
+                        updated: upd > 0 ? new Date(upd).toISOString() : '',
+                        ts: upd,
+                    });
+                }
+                return out;
+            }
+        } catch (e) { /* cae al parser de tabla */ }
+    }
+    const table = await listSessionsInFolder(folder);
+    return table.map((s) => ({ id: s.id, title: s.title, folder, updated: s.updated, ts: 0 }));
+}
+
+// Indice liviano de sesiones de los proyectos CONECTADOS (id, titulo, carpeta,
+// updated). Se cortan a las N mas recientes por proyecto (limit por carpeta o
+// config sessionIndexLimit, default 4). Devuelve tambien el total de sesiones
+// de cada carpeta para que la web sepa si hay mas para pedir. El hub poda lo
+// que no venga aca.
 async function buildSessionIndex(target) {
-    const folders = forcedFolders(target);
+    const defLimit = Math.max(1, Math.min(200, parseInt(config.sessionIndexLimit, 10) || 4));
+    const folders = activeFolderEntries();
     const seen = new Set();
     const sessions = [];
-    for (const folder of folders) {
+    const totals = {};
+    for (const entry of folders) {
+        const folder = entry.path;
+        const limit = entry.limit > 0 ? Math.max(1, Math.min(200, entry.limit)) : defLimit;
         let list = [];
-        try { list = await listSessionsInFolder(folder); } catch (e) { continue; }
+        try { list = await listSessionsJson(folder); } catch (e) { continue; }
+        // `opencode session list` es global: descartamos las de otras carpetas.
+        list = list.filter((s) => sameFolder(s.folder, folder));
+        list.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+        totals[folder] = list.length;
+        let taken = 0;
         for (const s of list) {
             if (seen.has(s.id)) continue;
             seen.add(s.id);
-            sessions.push({ id: s.id, title: s.title || '', folder, updated: s.updated || '' });
+            sessions.push({ id: s.id, title: s.title || '', folder: folder, updated: s.updated || '' });
+            taken++;
+            if (taken >= limit) break;
         }
     }
-    return sessions;
+    return { sessions: sessions, totals: totals };
 }
 
 async function pushSessionIndex(target) {
     const t = target || activeMode;
     try {
-        const sessions = await buildSessionIndex(targetState(t));
-        await api('index_sync', { sessions: sessions }, t);
+        const built = await buildSessionIndex(targetState(t));
+        const sessions = built.sessions;
+        await api('index_sync', { sessions: sessions, totals: built.totals }, t);
         if (!(pushSessionIndex._silent)) log('indice de sesiones (' + t + '): ' + sessions.length);
         return sessions.length;
     } catch (e) {
@@ -1624,12 +1863,13 @@ async function sweepTarget(t, opts) {
     const target = targetState(t);
     const full = !target.fullScanTs || (Date.now() - target.fullScanTs > FULL_SCAN_MS);
     let folders;
+    const activeSet = new Set(activeFolders());
     if (opts && opts.folders && opts.folders.length) {
-        folders = opts.folders;
+        folders = opts.folders.filter((f) => activeSet.has(f));
     } else if (full) {
-        folders = topWorkspaceFolders();
+        folders = Array.from(activeSet);
     } else {
-        folders = Object.keys(target.folders);
+        folders = Object.keys(target.folders).filter((f) => activeSet.has(f));
     }
     const knownOc = lastKnownOc[t] || [];
     // Primer barrido del destino (nada importado todavía): sin tope, para que
@@ -1707,13 +1947,11 @@ async function sweepTarget(t, opts) {
     return imported;
 }
 
-// Carpetas para un sync forzado: nivel 1 del workspace + las ya conocidas por
-// barridos previos (incluye subcarpetas canónicas de proyectos compartidos).
+// Carpetas para un sync forzado: solo las conectadas (activas). Antes sumaba
+// el nivel 1 del workspace y todo el sync-state, lo que espejaba proyectos que
+// el usuario nunca conecto.
 function forcedFolders(target) {
-    const set = new Set();
-    for (const f of topWorkspaceFolders()) set.add(f);
-    for (const f of Object.keys(target.folders || {})) set.add(f);
-    return Array.from(set);
+    return activeFolders();
 }
 
 // Sync manual "total" de un destino: reimporta todo ignorando el estado local
@@ -2673,6 +2911,10 @@ async function handleCommand(cmd) {
     // Sincronizacion manual del historial (botones de la web).
     if (cmd.name === 'session_sync') { await sessionSyncOne(cmd); return; }
     if (cmd.name === 'session_sync_all') { await sessionSyncAll(cmd); return; }
+    // Conectar/desconectar proyectos desde la web (sidebar en blanco por defecto).
+    if (cmd.name === 'folder_attach') { await handleFolderToggle(cmd, true); return; }
+    if (cmd.name === 'folder_detach') { await handleFolderToggle(cmd, false); return; }
+    if (cmd.name === 'folder_more') { await handleFolderMore(cmd); return; }
     // Historial por proxy: la web lo pide y el puente lo saca de opencode.
     if (cmd.name === 'session_history') { await sessionHistory(cmd); return; }
     // Mapea el nombre "interno" al subcomando real de opencode.
@@ -2717,16 +2959,18 @@ async function tick(opts) {
     const ac = new AbortController();
     const guard = setTimeout(() => ac.abort(), 35000); // si el hosting se cuelga
     const msgs = [], folders = [], cmds = [];
+    let resetFlag = false;
     let cut = false;
     let resolveWork;
     const workPromise = new Promise((res) => { resolveWork = res; });
     const collect = (t, data) => {
         if (cut) return;
         if (Array.isArray(data.known_oc)) lastKnownOc[t] = data.known_oc;
+        if (data.reset) resetFlag = true;
         for (const m of (data.messages || [])) { m._t = t; msgs.push(m); }
         for (const f of (data.folders || [])) { f._t = t; folders.push(f); }
         for (const c of (data.commands || [])) { c._t = t; cmds.push(c); }
-        if (msgs.length || folders.length || cmds.length) resolveWork();
+        if (msgs.length || folders.length || cmds.length || resetFlag) resolveWork();
     };
     const ps = activeTargets().map((t) =>
         // waitMax 5: el hosting retiene la respuesta hasta 5 s cuando no hay
@@ -2738,7 +2982,7 @@ async function tick(opts) {
             .catch((e) => { if (!cut && shouldLogDown(t)) log('no se pudo consultar ' + t + ': ' + e.message); })
     );
     await Promise.race([Promise.all(ps), workPromise]);
-    let work = msgs.length > 0 || folders.length > 0 || cmds.length > 0;
+    let work = msgs.length > 0 || folders.length > 0 || cmds.length > 0 || resetFlag;
     if (work) {
         cut = true;
         ac.abort(); // el resto eran esperas largas sin nada que reclamar
@@ -2837,6 +3081,10 @@ async function tick(opts) {
         }
         if (folders.length) {
             await syncCatalog({ silent: true });
+        }
+        // El hub pidio un reset (clean/wipe-data): desconecta los proyectos.
+        if (resetFlag) {
+            await handleBridgeReset();
         }
     } finally {
         // El cleanup no debe depender de nada que pueda fallar: primero se

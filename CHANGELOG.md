@@ -4,6 +4,41 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- Hub en blanco por defecto: los proyectos se **conectan a mano** desde la
+  vista **proyectos** del sidebar (admin). El puente solo publica el indice de
+  las carpetas conectadas (`active` en `folders.json`), cortado a las
+  `sessionIndexLimit` sesiones mas recientes (default 4) por proyecto, usando
+  `opencode session list --format json` (agrupa por proyecto real).
+- Comandos `folder_attach`/`folder_detach` (web -> puente) y acciones
+  `folder_attach`/`folder_detach` en el hub. Crear un chat o una carpeta
+  conecta el proyecto automaticamente.
+- **Ver mas sesiones**: el home muestra las sesiones que el hub tiene del
+  proyecto y el boton `Ver mas sesiones · N` pide 4 mas (comando `folder_more`,
+  que sube el `limit` de esa carpeta en `folders.json` y republica el indice).
+  El indice informa el total de sesiones por carpeta.
+- Boton **quitar** en el encabezado de cada proyecto del sidebar: desconecta la
+  carpeta y el hub poda al instante sus sesiones importadas.
+- Marcador de reset (`.openbridge/data/.reset`): `deploy:hub clean|reset
+  --wipe-data` lo escribe, el puente lo ve en el poll, desconecta los proyectos
+  y confirma con `reset_ack` (`--no-reset-bridge` para omitirlo).
+
+### Cambiado
+
+- El indice filtra por carpeta: `opencode session list` es **global**, asi que
+  el puente descarta las sesiones cuyo `directory` no es la carpeta conectada.
+  Antes se colaban las sesiones mas recientes de todo el equipo.
+- `index_sync` ahora **poda**: las sesiones importadas de un puente que ya no
+  vienen en el indice se borran (con su historial), para que el sidebar refleje
+  la PC y no acumule sesiones fantasma. Tambien usa el `updated` de opencode
+  para `last_ts`.
+- El catalogo guarda el flag `active` por carpeta (PHP y Node).
+- Las sesiones importadas ya no muestran el menu de borrar (el sidebar es un
+  espejo de los proyectos conectados; se ocultan desconectando el proyecto).
+
 ## [0.11.0] - 2026-09-19
 
 ### Cambios

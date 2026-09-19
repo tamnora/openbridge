@@ -73,6 +73,30 @@ guarda por PC (`data/catalog-<id>.json`) y el sidebar permite elegir que PC usar
 de Node (`.js`/`.mjs`/`.cjs`) el puente lo corre con el `node` actual, lo que
 permite wrappers propios y las pruebas con un opencode simulado.
 
+## Proyectos conectados (hub en blanco)
+
+El hub arranca **en blanco**: el puente solo publica el indice de las carpetas
+marcadas `active` en `folders.json`. Se conectan a mano desde la vista
+**proyectos** del sidebar (acciones `folder_attach`/`folder_detach`, solo
+`admin`); crear un chat o una carpeta tambien conecta el proyecto. Por proyecto
+se publican a lo sumo `sessionIndexLimit` sesiones (default 4), las mas
+recientes, con `opencode session list --format json` (agrupa por `directory`).
+Como ese listado es **global** (trae todo el equipo), el puente descarta las
+sesiones cuyo `directory` no es la carpeta conectada.
+
+El boton **Ver mas sesiones** del home pide 4 mas por proyecto (comando
+`folder_more`, que sube el `limit` de esa carpeta en `folders.json` y republica
+el indice). El indice manda tambien el **total** de sesiones por carpeta para
+que la web sepa si quedan mas. El boton **quitar** del encabezado del proyecto
+llama a `folder_detach`, que ademas poda al instante las importadas de esa
+carpeta.
+
+`index_sync` es autoritativo: las sesiones importadas de ese puente que no
+vienen en el indice se borran (con su historial), asi el sidebar no acumula
+sesiones fantasma. Un `clean`/`reset --wipe-data` del deploy deja el marcador
+`.openbridge/data/.reset`; el puente lo ve en el poll, desconecta los proyectos
+y confirma con `reset_ack`.
+
 ## Usuarios y roles
 
 `app.json` guarda `users[]` (`id`, `name`, `role`, `password` scrypt, `pv`,
@@ -104,6 +128,8 @@ local como en remoto:
   (reimporta todo ignorando el estado local); al terminar llama a
   `session_reconcile`, que borra en el hub las sesiones importadas de ese puente
   que ya no existen en la PC (solo en carpetas escaneadas).
+- Proyectos: `folder_attach`/`folder_detach` conectan o desconectan una carpeta
+  del sidebar (`active` en `folders.json`); al conectar se republica el indice.
 
 Las rutas se validan contra el workspace (`procResolveFolder`/`resolveInWorkspace`)
 y los argumentos con una whitelist (`OC_ALLOWED`). `proc_detect` es read-only:
