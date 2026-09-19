@@ -85,8 +85,8 @@ var els = {
     themeLink: document.getElementById('themeStylesheet'),
     statusbar: document.getElementById('statusbar'),
     sbDot: document.getElementById('sbDot'),
-    sbMode: document.getElementById('sbMode'),
     sbModel: document.getElementById('sbModel'),
+    sbSep2: document.getElementById('sbSep2'),
     sbExtra: document.getElementById('sbExtra'),
     fabNew: document.getElementById('fabNew'),
     modelOverlay: document.getElementById('modelOverlay'),
@@ -245,6 +245,13 @@ function esc(t) {
     return d.innerHTML;
 }
 
+// Indicador "cargando…" con scanner tipo KITT.
+function loadingHtml(label, compact) {
+    return '<div class="loader' + (compact ? ' compact' : '') + '" role="status" aria-live="polite">'
+        + '<span class="loader-track" aria-hidden="true"><span class="loader-beam"></span></span>'
+        + '<span class="loader-txt">' + esc(label || 'cargando…') + '</span></div>';
+}
+
 // ---------------------------------------------------------------------------
 // Entorno: LOCAL (127.0.0.1 / localhost / LAN) vs REMOTO (hosting público)
 // ---------------------------------------------------------------------------
@@ -263,9 +270,7 @@ function updateStatusbar() {
     if (!els.sbDot) return;
     var on = bridgeOnline();
     els.sbDot.className = 'dot ' + (on ? 'on' : 'off');
-    var local = isLocalHost();
-    els.sbMode.textContent = local ? 'local' : 'conectado';
-    els.sbMode.className = 'seg mode' + (local ? '' : ' remoto');
+    els.sbDot.title = on ? 'puente en línea' : 'puente apagado';
     var s = state.currentSession;
     if (s) {
         els.sbModel.textContent = (s.model || 'sin modelo') + ' · ' + (s.agent || 'build');
@@ -277,26 +282,28 @@ function updateStatusbar() {
         els.sbModel.textContent = 'sin workspace';
         els.sbModel.title = '';
     }
-    var extra = (state.sessionCount === 1 ? '1 chat' : state.sessionCount + ' chats');
-    var info = activeBridgeInfo();
-    if (info && bridgeList().length >= 2) {
-        extra = (info.name || info.id) + ' · ' + extra;
-    }
-    if (state.currentId !== null && state.currentSession) {
-        extra = '· ' + extra;
-        var tokTxt = sessionTokensLabel(state.currentSession);
+    // Solo el consumo de la sesion activa (no totales del proyecto).
+    var extra = '';
+    if (s) {
+        var tokTxt = sessionTokensLabel(s);
         if (tokTxt) {
-            var pct = sessionTokensPct(state.currentSession);
-            extra += ' · ' + tokTxt + ' tokens' + (pct ? ' (' + pct + ')' : '');
+            var pct = sessionTokensPct(s);
+            extra += '<span class="stok" title="' + esc(sessionTokensTitle(s)) + '">'
+                + esc(tokTxt) + ' tokens</span>';
+            if (pct) {
+                var pctNum = parseInt(pct, 10) || 0;
+                var cls = ctxLevelClass(pctNum);
+                var w = Math.max(4, Math.min(100, pctNum));
+                extra += '<span class="ctxbar ' + cls + '" title="contexto usado: ' + esc(pct) + '">'
+                    + '<span class="ctxfill" style="width:' + w + '%"></span></span>'
+                    + '<span class="ctxpct ' + cls + '">' + esc(pct) + '</span>';
+            }
         }
-        var cost = fmtCost(state.currentSession.cost);
-        if (cost) extra += ' · ' + cost;
+        var cost = fmtCost(s.cost);
+        if (cost) extra += (extra ? ' · ' : '') + esc(cost);
     }
-    var totalCost = 0;
-    for (var ci = 0; ci < state.sessions.length; ci++) totalCost += Number(state.sessions[ci].cost) || 0;
-    var totalTxt = fmtCost(totalCost);
-    if (totalTxt) extra += ' · ' + totalTxt + ' total';
-    els.sbExtra.textContent = extra;
+    els.sbExtra.innerHTML = extra;
+    if (els.sbSep2) els.sbSep2.style.display = extra ? '' : 'none';
 }
 
 // ---------------------------------------------------------------------------
@@ -880,6 +887,15 @@ function sessionTokensPct(s) {
     return Math.min(100, Math.round((tok / ctx) * 100)) + '%';
 }
 
+// Nivel de contexto: verde <25%, amarillo <50%, naranja <75%, rojo >=75%.
+function ctxLevelClass(pct) {
+    var p = Number(pct) || 0;
+    if (p >= 75) return 'ctx-crit';
+    if (p >= 50) return 'ctx-high';
+    if (p >= 25) return 'ctx-mid';
+    return 'ctx-low';
+}
+
 // Etiqueta "consumidos / capacidad" de la sesion.
 function sessionTokensHtml(s) {
     var label = sessionTokensLabel(s);
@@ -894,17 +910,10 @@ function sessionCostHtml(s) {
     return '<span class="scost" title="' + sessionTokensTitle(s) + '">' + cost + '</span>';
 }
 
-// Subtitulo del encabezado: proyecto · modelo · agente · tokens/contexto · costo.
+// Subtitulo del encabezado: solo el proyecto (el modelo/agente y el consumo
+// viven en la barra de estado, para no repetir datos).
 function sessionSubtitle(s) {
-    var txt = projectLabel(s.folder) + ' · ' + (s.model || 'sin modelo') + ' · ' + (s.agent || 'build');
-    var label = sessionTokensLabel(s);
-    if (label) {
-        var pct = sessionTokensPct(s);
-        txt += ' · ' + label + ' tokens' + (pct ? ' (' + pct + ')' : '');
-    }
-    var cost = fmtCost(s.cost);
-    if (cost) txt += ' · ' + cost;
-    return txt;
+    return projectLabel(s.folder) || '';
 }
 
 // Actividad agregada de un grupo de sesiones: 'working' / 'waiting' / ''.
@@ -1382,7 +1391,7 @@ function rpNodeHtml(rel, depth) {
                 if (state.rpTreeErr[p]) {
                     html += '<div class="rp-empty" style="' + pad + '">' + esc(state.rpTreeErr[p]) + '</div>';
                 } else if (!state.rpTreeCache[p]) {
-                    html += '<div class="rp-empty" style="' + pad + '">cargando…</div>';
+                    html += '<div style="' + pad + '">' + loadingHtml('cargando…', true) + '</div>';
                 } else {
                     html += rpNodeHtml(p, depth + 1);
                 }
@@ -1411,7 +1420,7 @@ function rpRenderTree() {
         return;
     }
     if (!state.rpTreeCache[root]) {
-        box.innerHTML = head + '<div class="rp-empty">cargando…</div>';
+        box.innerHTML = head + loadingHtml('cargando…', true);
         rpLoadDir(root);
         return;
     }
@@ -2386,7 +2395,7 @@ function openChat(id) {
     state.chatSearch = { query: '', firstHit: false };
     if (state.view !== 'chat') state.prevView = state.view;
     showView('chat');
-    els.messages.innerHTML = '<div class="empty">cargando…</div>';
+    els.messages.innerHTML = loadingHtml();
     loadHistory(id);
     try { history.replaceState(null, '', 'chat.php?session=' + id); } catch (e) {}
 }
@@ -3842,7 +3851,7 @@ async function loadChanges(folder) {
     var toolbar = (isAdmin() && tracked)
         ? '<div class="files-toolbar"><button type="button" class="linkbtn" id="chgRevert">↩ revertir cambios rastreados</button></div>'
         : '';
-    els.viewChanges.innerHTML = changesHead(folder, status.branch) + toolbar + list + '<div class="placeholder">cargando diff…</div>';
+        els.viewChanges.innerHTML = changesHead(folder, status.branch) + toolbar + list + loadingHtml('cargando diff…');
 
     var diff = await ocCommand('git_diff', [folder], 20, 700);
     var diffHtml;
