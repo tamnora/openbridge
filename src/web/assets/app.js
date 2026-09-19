@@ -2321,7 +2321,7 @@ async function loadHistory(sid, incremental) {
                 var parts = Array.isArray(m.parts) ? m.parts : [];
                 var txt = parts.filter(function (p) { return p.type === 'text'; })
                     .map(function (p) { return p.text || ''; }).join('\n\n');
-                return { id: k + 1, role: m.role, ts: m.ts, oc_msg: m.oc_msg, agent: m.agent, parts: parts, text: txt };
+                return { id: k + 1, role: m.role, ts: m.ts, oc_msg: m.oc_msg, agent: m.agent, parts: parts, text: txt, status: 'done' };
             });
             cache = {
                 wasLive: live,

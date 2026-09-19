@@ -454,6 +454,10 @@ function history_ready($id, $payload) {
     $fp = null;
     json_read(history_fetch_file($id), $fp);
     json_save(is_array($payload) ? $payload : [], $fp);
+    // Limpia fetches viejos que el cliente no llego a tomar (evita basura).
+    foreach ((array)@glob(DATA_DIR . '/fetch-*.json') as $f) {
+        if (@filemtime($f) < time() - 600) @unlink($f);
+    }
 }
 function history_take($id) {
     $file = history_fetch_file($id);

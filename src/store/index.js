@@ -1066,6 +1066,20 @@ async function sessionIndexList(bridge) {
 // Resultado efimero de una lectura grande (historial): la web lo toma una vez.
 async function historyReady(id, payload) {
     await jsonfile.writeAtomic(paths.fetchFile(id), payload && typeof payload === 'object' ? payload : {});
+    // Limpia fetches viejos que el cliente no llego a tomar (evita basura).
+    try {
+        const dir = paths.dataDir();
+        const files = await fs.readdir(dir);
+        const now = Date.now();
+        for (const f of files) {
+            if (!/^fetch-\d+\.json$/.test(f)) continue;
+            const full = path.join(dir, f);
+            try {
+                const st = await fs.stat(full);
+                if (now - st.mtimeMs > 10 * 60 * 1000) await fs.unlink(full);
+            } catch (e) { /* nada */ }
+        }
+    } catch (e) { /* sin data */ }
 }
 async function historyTake(id) {
     const file = paths.fetchFile(id);
