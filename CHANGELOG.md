@@ -4,7 +4,8 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
-## [Unreleased]
+## [0.10.0] - 2026-09-19
+
 
 ### Agregado
 
