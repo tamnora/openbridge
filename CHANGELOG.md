@@ -4,6 +4,38 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- **Streaming en vivo del chat**: el SSE del hub emite un evento liviano
+  `inflight` cuando el puente publica un parcial (hub Node y PHP), de modo que
+  el chat abierto refresca al instante y no solo al empezar/terminar el turno.
+  Si al conectar ya habia un turno en curso (o termino), se avisa tambien.
+
+### Cambiado
+
+- El puente publica parciales cada **300 ms** (antes 750 ms) y la firma de
+  partes es fiel: un cambio de estado en una tool intermedia (no solo la
+  ultima) se republica.
+- El throttle de refresco baja a **200 ms** mientras hay streaming (antes fijo
+  en 600 ms) y las tarjetas de tool se actualizan tambien cuando cambia su
+  titulo o salida con el estado `running`.
+
+### Corregido
+
+- Dictado por voz: ya no repite palabras. Se reconstruye la transcripcion desde
+  `ev.results` en cada evento en vez de acumular los finales, porque
+  `resultIndex` no es confiable en Chrome/Android y volvia a sumar lo ya dicho.
+
+### Cambiado
+
+- Sincronizacion de chats casi en tiempo real mas rapida: el watcher de
+  `opencode.db` mira cada 1.5s (antes 4s), el barrido arranca a los 2.5s de calma
+  (antes 8s) y el throttle baja a 5s (antes 30s). Ademas, un barrido pedido dentro
+  de la ventana ya no queda pendiente hasta el proximo mensaje: un timer lo
+  reintenta al vencer el throttle.
+
 ## [0.13.0] - 2026-09-19
 
 

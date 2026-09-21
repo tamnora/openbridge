@@ -60,8 +60,14 @@ OpenBridge. La CLI pasa la **base** (`--dir`/cwd) al puente via
 2. El mensaje queda `pending` en `data/messages-<id>.json`.
 3. El puente hace `poll`, reclama el mensaje y corre
    `opencode run --model <m> [--session <id>]`.
-4. La salida se publica con `respond_partial` (streaming) y `respond`.
-5. El server empuja un Web Push y el celular refresca por SSE/poll.
+4. La salida se publica con `respond_partial` (streaming, cada 300 ms) y
+   `respond`.
+5. Cada `respond_partial` reescribe `data/inflight-<pc>.json`; el SSE del hub
+   vigila esos archivos y emite un evento liviano `inflight` (con el id de
+   sesion) para que el chat abierto refresque al toque. Al terminar, `respond`
+   limpia el inflight y escribe el mensaje: el evento `sessions_changed` hace
+   el refresco final.
+6. El server empuja un Web Push y el celular refresca por SSE/poll.
 
 ## Multi-PC
 

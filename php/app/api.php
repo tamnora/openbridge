@@ -1413,6 +1413,7 @@ if ($action === 'stream') {
     $lastRegSig = '';
     $lastBusySig = '';
     $lastCatSigs = [];
+    $lastInflightSigs = [];
     $lastSessionsSig = '';
     $lastMsgScanSec = 0;
     $lastMsgMaxTs = 0;
@@ -1479,6 +1480,38 @@ if ($action === 'stream') {
         if ($sessSig !== $lastSessionsSig) {
             $lastSessionsSig = $sessSig;
             if ($sessSig !== '') $send('sessions_changed', ['ts' => gmdate('c')]);
+        }
+        // Turno en curso: cada parcial del puente reescribe inflight-<pc>.json.
+        // Aviso liviano (sin payload) para que el chat abierto refresque al
+        // toque; el contenido lo trae el history que pide la web. Paridad con
+        // el hub Node (routes.js handleStream).
+        $presentInflight = [];
+        foreach ((glob(DATA_DIR . '/inflight*.json') ?: []) as $f) {
+            $presentInflight[basename($f)] = true;
+            $sigF = $sigOf($f);
+            $seen = isset($lastInflightSigs[$f]);
+            $prev = $seen ? $lastInflightSigs[$f] : null;
+            $lastInflightSigs[$f] = $sigF;
+            if ($seen && $prev === $sigF) continue;
+            // Si al conectar ya habia un turno en curso, avisar una vez.
+            if (!$seen && $sigF === '') continue;
+            $sessionId = null;
+            if ($sigF !== '') {
+                $inf = json_decode((string)@file_get_contents($f), true);
+                if (is_array($inf) && (int)($inf['session_id'] ?? 0) > 0) $sessionId = (int)$inf['session_id'];
+            }
+            $base = basename($f);
+            $id = $base === 'inflight.json' ? '' : preg_replace('/^inflight-|\.json$/', '', $base);
+            $send('inflight', ['bridge' => (string)$id, 'session_id' => $sessionId, 'ts' => gmdate('c')]);
+        }
+        // Un inflight borrado desaparece del glob: barrer los conocidos que ya
+        // no estan (turno terminado) y avisar con session_id null.
+        foreach (array_keys($lastInflightSigs) as $f) {
+            if (isset($presentInflight[basename($f)])) continue;
+            unset($lastInflightSigs[$f]);
+            $base = basename($f);
+            $id = $base === 'inflight.json' ? '' : preg_replace('/^inflight-|\.json$/', '', $base);
+            $send('inflight', ['bridge' => (string)$id, 'session_id' => null, 'ts' => gmdate('c')]);
         }
         // Un mensaje en curso (pending→processing→streaming→done) cambia su
         // messages-<id>.json sin tocar sessions.json. Para que las listas

@@ -689,9 +689,16 @@ function streamCli(args, opts, onPartial) {
             parts.push(p);
         }
 
+        // Firma fiel de las partes: cada id con su estado (una tool intermedia
+        // que pasa running -> completed tambien debe republicarse).
         function partsSig() {
-            const last = parts.length ? parts[parts.length - 1] : null;
-            return parts.length + '|' + (last && last.type === 'tool' && last.state ? last.state.status : '');
+            let sig = parts.length + '';
+            for (let i = 0; i < parts.length; i++) {
+                const p = parts[i];
+                sig += '|' + (p && p.id ? String(p.id) : i) + ':' +
+                    (p && p.type === 'tool' && p.state ? p.state.status : p.type);
+            }
+            return sig;
         }
 
         function drain() {
@@ -821,7 +828,9 @@ function streamCli(args, opts, onPartial) {
         child.stdin.on('error', () => {});
         child.stdin.end();
 
-        const flusher = setInterval(drain, 750);
+        // Publica parciales cada 300 ms: con el evento SSE 'inflight' la web
+        // refresca enseguida, y un intervalo mas corto se nota en el en vivo.
+        const flusher = setInterval(drain, 300);
         child.on('close', (code) => {
             if (settled) return;
             settled = true;
@@ -1847,6 +1856,9 @@ async function syncSessions(opts) {
         }
     } finally {
         sweepRunning = false;
+        // El watcher pudo pedir otro barrido mientras este corria: se reintenta
+        // en vez de esperar al proximo cambio de la base o al respaldo de 3 min.
+        if (sweepPending && !busy) { sweepPending = false; scheduleSweep('pendiente'); }
     }
 }
 
@@ -2071,11 +2083,30 @@ async function sessionSyncAll(cmd) {
 // un barrido tras un periodo de calma, en vez de esperar 15 min.
 // ---------------------------------------------------------------------------
 let sweepPending = false;
+let sweepTimer = null;
 let lastSweepAt = 0;
+// Cadencia del watcher y calma antes de barrer. Antes eran 4s + 8s, con un
+// throttle de 30s que dejaba el barrido `pending` hasta el proximo mensaje (o
+// el respaldo de 3 min): un chat hecho en el TUI tardaba en verse en el hub.
+const WATCH_POLL_MS = 1500;
+const WATCH_DEBOUNCE_MS = 2500;
+const SWEEP_THROTTLE_MS = 5000;
 
 function scheduleSweep(reason) {
     if (busy || sweepRunning) { sweepPending = true; return; }
-    if (Date.now() - lastSweepAt < 30000) { sweepPending = true; return; }
+    const since = Date.now() - lastSweepAt;
+    if (since < SWEEP_THROTTLE_MS) {
+        // Dentro del throttle: no perder el pedido. Un timer lo reintenta al
+        // vencer la ventana (antes solo se corria al terminar un mensaje).
+        sweepPending = true;
+        if (!sweepTimer) {
+            sweepTimer = setTimeout(() => {
+                sweepTimer = null;
+                if (sweepPending && !busy && !sweepRunning) { sweepPending = false; scheduleSweep('pendiente'); }
+            }, SWEEP_THROTTLE_MS - since);
+        }
+        return;
+    }
     lastSweepAt = Date.now();
     syncSessions({ silent: true, force: reason === 'watcher' }).catch(handleError);
 }
@@ -2114,8 +2145,8 @@ function startSyncWatcher() {
         if (sig === '' || sig === last) return;
         last = sig;
         if (timer) clearTimeout(timer);
-        timer = setTimeout(() => scheduleSweep('watcher'), 8000);
-    }, 4000);
+        timer = setTimeout(() => scheduleSweep('watcher'), WATCH_DEBOUNCE_MS);
+    }, WATCH_POLL_MS);
     // Respaldo por si el watcher no ve el cambio (otra ruta o filesystem).
     setInterval(() => scheduleSweep('periodico'), 3 * 60 * 1000);
 }

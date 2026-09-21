@@ -50,6 +50,69 @@ function decodeSession(token) {
     return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
 }
 
+// Abre el stream SSE y permite esperar eventos puntuales (la respuesta no
+// termina: hay que leer por bloques).
+function openStream(port, jar) {
+    const st = { events: [], waiters: [], req: null, cursor: 0 };
+    st.waitFor = (name, timeoutMs = 8000) => new Promise((resolve, reject) => {
+        while (st.cursor < st.events.length) {
+            const ev = st.events[st.cursor++];
+            if (ev.event === name) return resolve(ev);
+        }
+        const w = {
+            name, resolve,
+            timer: setTimeout(() => {
+                const i = st.waiters.indexOf(w);
+                if (i >= 0) st.waiters.splice(i, 1);
+                reject(new Error('timeout esperando el evento ' + name));
+            }, timeoutMs),
+        };
+        st.waiters.push(w);
+    });
+    st.close = () => { try { st.req.destroy(); } catch (e) {} };
+    return new Promise((resolve, reject) => {
+        const req = http.request({
+            host: '127.0.0.1', port, path: '/api.php?action=stream',
+            headers: { Cookie: cookieHeader(jar) },
+        }, (res) => {
+            if (res.statusCode !== 200) {
+                const chunks = [];
+                res.on('data', (c) => chunks.push(c));
+                res.on('end', () => reject(new Error('stream status ' + res.statusCode + ': ' + Buffer.concat(chunks).toString('utf8'))));
+                return;
+            }
+            let buf = '';
+            res.on('data', (c) => {
+                buf += c.toString('utf8');
+                for (;;) {
+                    const idx = buf.indexOf('\n\n');
+                    if (idx < 0) break;
+                    const lines = buf.slice(0, idx).split('\n');
+                    buf = buf.slice(idx + 2);
+                    const em = /^event: (.+)$/.exec(lines[0] || '');
+                    if (!em) continue;
+                    const dm = /^data: (.+)$/.exec(lines[1] || '');
+                    let data = null;
+                    try { data = dm ? JSON.parse(dm[1]) : null; } catch (e) { data = null; }
+                    const ev = { event: em[1], data };
+                    st.events.push(ev);
+                    st.waiters = st.waiters.filter((w) => {
+                        if (w.name !== ev.event) return true;
+                        clearTimeout(w.timer);
+                        w.resolve(ev);
+                        return false;
+                    });
+                }
+            });
+            res.on('error', () => {});
+            resolve(st);
+        });
+        req.on('error', reject);
+        req.end();
+        st.req = req;
+    });
+}
+
 test('API: ping publico, login y endpoints protegidos', async (t) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-api-'));
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-api-ws-'));
@@ -276,4 +339,73 @@ test('API: instalacion legada (username/password) migra y loguea', async (t) => 
 
     const boot = await request(port, { url: '/api.php?action=bootstrap', headers: { Cookie: cookieHeader(jar) } });
     assert.equal(JSON.parse(boot.body).ok, true);
+});
+
+test('SSE: evento inflight cuando el puente publica parciales', async (t) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-api-sse-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-api-sse-ws-'));
+    paths.setHome(home);
+    paths.ensureDirs();
+    const projPath = path.join(root, 'proj');
+    fs.mkdirSync(projPath);
+
+    const app = {
+        port: 0,
+        host: '127.0.0.1',
+        baseUrl: 'http://127.0.0.1',
+        users: [config.makeUser('admin', 'secreta', 'admin')],
+        csrfSecret: 'csrf-secret',
+        bridgeToken: 'bridge-token',
+        vapid: { publicKey: '', privateKey: '' },
+        tunnel: { provider: 'none', domain: '' },
+    };
+    config.writeApp(app);
+    await store.syncCatalog(
+        [{ name: 'proj', path: projPath }],
+        ['m/a'], root, true, ['build'], {}, [], {}, paths.catalogFile()
+    );
+
+    const server = web.createServer(app);
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    t.after(() => {
+        server.close();
+        fs.rmSync(home, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    const sid = await store.addSession('sse', projPath, 'm/a', 'build');
+
+    const jar = {};
+    const page = await request(port, { url: '/login.php' });
+    addCookies(jar, page);
+    const csrf = /name="csrf" value="([^"]+)"/.exec(page.body)[1];
+    const form = 'csrf=' + encodeURIComponent(csrf) + '&username=admin&password=secreta';
+    const login = await request(port, {
+        method: 'POST', url: '/login.php',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(jar), 'Content-Length': Buffer.byteLength(form) },
+        body: form,
+    });
+    assert.equal(login.status, 302);
+    addCookies(jar, login);
+
+    const stream = await openStream(port, jar);
+    t.after(() => stream.close());
+    await stream.waitFor('hello');
+
+    // Primer parcial del puente: evento con la sesion en curso.
+    await store.inflightSet('', { session_id: sid, user_id: 1, text: 'parcial 1', reasoning: '', parts: [], status: 'streaming', ts: store.nowIso() });
+    const ev1 = await stream.waitFor('inflight');
+    assert.equal(ev1.data.session_id, sid);
+    assert.equal(ev1.data.bridge, '');
+
+    // Segundo parcial (cambia el tamano): nuevo evento.
+    await store.inflightSet('', { session_id: sid, user_id: 1, text: 'parcial 1 con mas texto', reasoning: '', parts: [], status: 'streaming', ts: store.nowIso() });
+    const ev2 = await stream.waitFor('inflight');
+    assert.equal(ev2.data.session_id, sid);
+
+    // Al limpiar el inflight (turno terminado): aviso con session_id null.
+    await store.inflightClear('');
+    const ev3 = await stream.waitFor('inflight');
+    assert.equal(ev3.data.session_id, null);
 });

@@ -874,6 +874,7 @@ async function handleStream({ app, req, res }) {
     const started = Date.now();
     let lastRegRaw = '', lastBusySig = '', lastSessionsSig = '', lastMsgScanSec = 0, lastMsgMaxTs = 0, lastNotify = 0, loop = 0;
     const lastCatSigs = {};
+    const lastInflight = {};
     let timer = null;
     const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
     req.on('close', stop);
@@ -895,7 +896,8 @@ async function handleStream({ app, req, res }) {
                 }
             }
             let files = [];
-            try { files = await fsp.readdir(paths.dataDir()); } catch (e) { /* nada */ }
+            let dirOk = true;
+            try { files = await fsp.readdir(paths.dataDir()); } catch (e) { dirOk = false; }
             for (const f of files) {
                 if (!/^catalog.*\.json$/.test(f)) continue;
                 const full = path.join(paths.dataDir(), f);
@@ -910,6 +912,39 @@ async function handleStream({ app, req, res }) {
             try { sraw = await fsp.readFile(paths.sessionsFile(), 'utf8'); } catch (e) { /* nada */ }
             const ssig = store.md5(sraw);
             if (ssig !== lastSessionsSig) { lastSessionsSig = ssig; send('sessions_changed', { ts: store.nowIso() }); }
+            // Turno en curso: cada parcial del puente reescribe inflight-<pc>.json.
+            // Aviso liviano (sin payload) para que el chat abierto refresque al
+            // toque; el contenido lo trae el history que pide la web.
+            for (const f of files) {
+                if (!/^inflight(-.*)?\.json$/.test(f)) continue;
+                const full = path.join(paths.dataDir(), f);
+                let st = null;
+                try { st = await fsp.stat(full); } catch (e) { st = null; }
+                const sig = st ? (st.mtimeMs + ':' + st.size) : 'gone';
+                const seen = full in lastInflight;
+                if (seen && lastInflight[full] === sig) continue;
+                lastInflight[full] = sig;
+                // Si al conectar ya habia un turno en curso, avisar una vez.
+                if (!seen && !st) continue;
+                let sessionId = null;
+                if (st) {
+                    try {
+                        const inf = JSON.parse(await fsp.readFile(full, 'utf8'));
+                        if (inf && parseInt(inf.session_id, 10) > 0) sessionId = parseInt(inf.session_id, 10);
+                    } catch (e) { /* aviso igual con session_id null */ }
+                }
+                send('inflight', { bridge: f === 'inflight.json' ? '' : f.replace(/^inflight-/, '').replace(/\.json$/, ''), session_id: sessionId, ts: store.nowIso() });
+            }
+            // Un inflight borrado desaparece del readdir: barrer los conocidos
+            // que ya no estan (turno terminado) y avisar con session_id null.
+            if (dirOk) {
+                for (const full of Object.keys(lastInflight)) {
+                    const f = path.basename(full);
+                    if (files.includes(f)) continue;
+                    delete lastInflight[full];
+                    send('inflight', { bridge: f === 'inflight.json' ? '' : f.replace(/^inflight-/, '').replace(/\.json$/, ''), session_id: null, ts: store.nowIso() });
+                }
+            }
             const nowSec = Math.floor(Date.now() / 1000);
             if (nowSec !== lastMsgScanSec) {
                 lastMsgScanSec = nowSec;

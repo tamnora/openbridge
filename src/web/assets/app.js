@@ -2040,7 +2040,15 @@ function msgSig(m) {
     if (m.parts && m.parts.length) {
         for (var i = 0; i < m.parts.length; i++) {
             var p = m.parts[i] || {};
-            psig += (p.type === 'tool' ? ((p.state && p.state.status) || '') : (p.text || '').length) + ',';
+            if (p.type === 'tool') {
+                // Estado, titulo y salida: una tool puede seguir 'running' con
+                // salida nueva (bash largo) y la tarjeta debe refrescarse.
+                var st = p.state || {};
+                psig += (st.status || '') + ':' + (st.title || '').length + ':'
+                    + (st.output != null ? String(st.output).length : 0) + ',';
+            } else {
+                psig += (p.text || '').length + ',';
+            }
         }
     }
     return (m.status || '') + '|' + (m.text || '').length + '|' + (m.reasoning || '').length
@@ -3060,15 +3068,13 @@ if (els.btnMic) {
         voice.rec.continuous = true;
         voice.rec.interimResults = true;
         voice.rec.onresult = function (ev) {
-            var fin = '', interim = '';
-            for (var i = ev.resultIndex; i < ev.results.length; i++) {
+            var fin = [], interim = [];
+            for (var i = 0; i < ev.results.length; i++) {
                 var r = ev.results[i];
-                if (r.isFinal) fin += r[0].transcript;
-                else interim += r[0].transcript;
+                (r.isFinal ? fin : interim).push(r[0].transcript);
             }
-            if (fin) voice.base = (voice.base + fin).replace(/\s+/g, ' ');
-            var tail = interim ? (voice.base ? ' ' : '') + interim : '';
-            els.input.value = (voice.base + tail).replace(/^\s+/, '');
+            var text = (voice.base + ' ' + fin.join(' ') + ' ' + interim.join(' ')).replace(/\s+/g, ' ');
+            els.input.value = text.replace(/^\s+/, '').replace(/\s+$/, '');
             autoGrow();
         };
         voice.rec.onerror = function (ev) {
@@ -4905,8 +4911,12 @@ async function panelStopTunnel(port) {
 function scheduleRefresh(reason) {
     var now = Date.now();
     if (state.refreshPending) return;
+    // En vivo ('inflight'): el puente publica parciales cada 300 ms, conviene
+    // un throttle mas corto que el general (600 ms) para que el streaming
+    // se vea fluido.
+    var gap = reason === 'inflight' ? 200 : 600;
     var elapsed = now - (state.lastRefresh || 0);
-    var wait = elapsed < 600 ? (600 - elapsed) : 0;
+    var wait = elapsed < gap ? (gap - elapsed) : 0;
     state.refreshPending = true;
     setTimeout(function () {
         state.refreshPending = false;
@@ -4981,6 +4991,15 @@ function startSSE() {
         else if (state.view === 'history') scheduleRefresh('sessions_changed');
         else if (state.view === 'sessions' && typeof loadSessionsView === 'function') loadSessionsView();
     });
+    es.addEventListener('inflight', function (e) {
+        // Parcial del puente (streaming): refresca rapido solo el chat abierto.
+        // session_id null = el turno termino (se limpio el inflight).
+        try {
+            var d = JSON.parse(e.data);
+            if (state.view !== 'chat' || state.currentId === null) return;
+            if (d.session_id == null || d.session_id === state.currentId) scheduleRefresh('inflight');
+        } catch (err) { /* ignore */ }
+    });
     es.addEventListener('ping', function () { /* keep-alive */ });
     es.addEventListener('bye', function () {
         state.sseBackoff = 1000;
@@ -5036,8 +5055,9 @@ function refreshActiveView(reason) {
     if (state.view === 'home' && typeof loadSessions === 'function') loadSessions();
     else if (state.view === 'chat') {
         if (state.currentId !== null && typeof loadHistory === 'function') loadHistory(state.currentId, true);
-        // El sidebar necesita previews frescas (punto "esperando respuesta").
-        if (typeof loadSessions === 'function') loadSessions();
+        // El sidebar necesita previews frescas (punto "esperando respuesta"),
+        // pero no con cada parcial del streaming: el estado no cambia ahi.
+        if (reason !== 'inflight' && typeof loadSessions === 'function') loadSessions();
     }
     else if (state.view === 'files' && typeof loadFiles === 'function') loadFiles(state.filesPath);
     else if (state.view === 'sessions' && typeof loadSessionsView === 'function') loadSessionsView();

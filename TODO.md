@@ -25,7 +25,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   `openbridge tunnel` y `init --domain`.
 - QR propio (`src/qr.js`, sin dependencias): en `init`/`status`/`server` y `openbridge qr`.
 - `bridge.js` parametrizado para la casa portable, con overrides por entorno.
-- Tests (`node --test`): **61/61** (smoke, auth/roles, API, QR, release, bridge
+- Tests (`node --test`): **62/62** (smoke, auth/roles, API + SSE, QR, release, bridge
   end-to-end con opencode mockeado, CLI, store/import, `safeJoinWorkspace`,
   migración, hub PHP end-to-end con `php -S`). CI Windows/Linux/macOS.
 - Release privado (`scripts/release.mjs`): guard de dueño, semver/prerelease y dist-tags.
@@ -73,6 +73,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] Vista **"cambios"** (git status + diff) del proyecto de la sesion, via el puente (funciona local y remoto).
 - [x] Boton **revertir** cambios rastreados desde la vista "cambios" (con confirmacion; no toca archivos nuevos).
 - [x] **Plantillas de prompts** guardadas en el navegador (insertar/borrar/guardar lo escrito).
+- [x] **Streaming en vivo fiel**: el SSE emite `inflight` con cada parcial del puente (hub Node y PHP), el chat refresca a ~200 ms mientras corre, parciales cada 300 ms y firma de partes fiel (tools intermedias incluidas).
 - [x] **Multiusuario** con roles `admin`/`user`: login usuario+contrasena, CLI `users`, gate server-side y **autor** en cada mensaje.
 
 ## 1b. Panel del proyecto y dev run (escritorio)
