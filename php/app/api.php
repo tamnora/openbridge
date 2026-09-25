@@ -424,31 +424,37 @@ if ($action === 'sync_catalog') {
             $folders[] = ['name' => mb_substr($f, 0, 60), 'path' => mb_substr($f, 0, 500), 'active' => false];
         }
     }
+    $hasModels = array_key_exists('models', $body);
     $models = [];
-    foreach ((array)($body['models'] ?? []) as $m) {
-        if (is_string($m) && trim($m) !== '') {
-            $models[] = mb_substr(trim($m), 0, 120);
-        }
-    }
-    // Catálogo completo agrupado por proveedor: {proveedor: [id, ...]}.
-    $modelsFull = [];
-    foreach ((array)($body['models_full'] ?? []) as $prov => $list) {
-        if (!is_string($prov) || $prov === '' || !is_array($list)) {
-            continue;
-        }
-        $clean = [];
-        foreach ($list as $m) {
+    if ($hasModels) {
+        foreach ((array)($body['models'] ?? []) as $m) {
             if (is_string($m) && trim($m) !== '') {
-                $clean[] = mb_substr(trim($m), 0, 160);
+                $models[] = mb_substr(trim($m), 0, 120);
             }
         }
-        if ($clean) {
-            $modelsFull[mb_substr($prov, 0, 60)] = array_slice(array_values($clean), 0, 800);
-        }
+        $models = array_slice($models, 0, 400);
     }
-    $modelsFull = array_slice($modelsFull, 0, 80, true);
+    // Catálogo completo agrupado por proveedor: {proveedor: [id, ...]}.
+    $hasModelsFull = array_key_exists('models_full', $body);
+    $modelsFull = [];
+    if ($hasModelsFull) {
+        foreach ((array)($body['models_full'] ?? []) as $prov => $list) {
+            if (!is_string($prov) || $prov === '' || !is_array($list)) {
+                continue;
+            }
+            $clean = [];
+            foreach ($list as $m) {
+                if (is_string($m) && trim($m) !== '') {
+                    $clean[] = mb_substr(trim($m), 0, 160);
+                }
+            }
+            if ($clean) {
+                $modelsFull[mb_substr($prov, 0, 60)] = array_slice(array_values($clean), 0, 800);
+            }
+        }
+        $modelsFull = array_slice($modelsFull, 0, 80, true);
+    }
     $folders = array_slice($folders, 0, 200);
-    $models = array_slice($models, 0, 400);
     $workspace = trim((string)($body['workspace'] ?? ''));
     $allowCreate = !empty($body['allowCreateFolders']);
     $agents = [];
@@ -459,30 +465,36 @@ if ($action === 'sync_catalog') {
     }
     $agents = array_slice($agents, 0, 20);
     // Modelos con entrada de imagen (visión) según el catálogo de opencode.
+    $hasVision = array_key_exists('vision', $body);
     $vision = [];
-    foreach ((array)($body['vision'] ?? []) as $m) {
-        if (is_string($m) && trim($m) !== '') {
-            $vision[] = mb_substr(trim($m), 0, 160);
+    if ($hasVision) {
+        foreach ((array)($body['vision'] ?? []) as $m) {
+            if (is_string($m) && trim($m) !== '') {
+                $vision[] = mb_substr(trim($m), 0, 160);
+            }
         }
+        $vision = array_slice(array_values(array_unique($vision)), 0, 800);
     }
-    $vision = array_slice(array_values(array_unique($vision)), 0, 800);
     // Contexto por modelo en tokens: {id: ctx} (formato del puente de OpenBridge).
+    $hasModelsCtx = array_key_exists('models_ctx', $body);
     $modelsCtx = [];
-    foreach ((array)($body['models_ctx'] ?? []) as $id => $v) {
-        if (!is_string($id) || trim($id) === '') {
-            continue;
+    if ($hasModelsCtx) {
+        foreach ((array)($body['models_ctx'] ?? []) as $id => $v) {
+            if (!is_string($id) || trim($id) === '') {
+                continue;
+            }
+            $ctx = (int)$v;
+            if ($ctx <= 0) {
+                continue;
+            }
+            $modelsCtx[mb_substr(trim($id), 0, 160)] = $ctx;
+            if (count($modelsCtx) >= 2000) break;
         }
-        $ctx = (int)$v;
-        if ($ctx <= 0) {
-            continue;
-        }
-        $modelsCtx[mb_substr(trim($id), 0, 160)] = $ctx;
-        if (count($modelsCtx) >= 2000) break;
     }
-    if (!sync_catalog($folders, $models, $workspace, $allowCreate, $agents, $modelsFull, $vision, $modelsCtx, $file)) {
+    if (!sync_catalog($folders, $hasModels ? $models : null, $workspace, $allowCreate, $agents, $hasModelsFull ? $modelsFull : null, $hasVision ? $vision : null, $hasModelsCtx ? $modelsCtx : null, $file)) {
         json_response(['ok' => false, 'error' => 'No se pudo guardar'], 500);
     }
-    json_response(['ok' => true, 'folders' => count($folders), 'models' => count($models), 'models_full' => count($modelsFull), 'agents' => count($agents)]);
+    json_response(['ok' => true, 'folders' => count($folders), 'models' => $hasModels ? count($models) : 0, 'models_full' => $hasModelsFull ? count($modelsFull) : 0, 'agents' => count($agents)]);
 }
 
 // ---------------------------------------------------------------------------

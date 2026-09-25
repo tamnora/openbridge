@@ -429,10 +429,15 @@ async function handleApi(ctx) {
                     folders.push({ name: store.mbSubstr(f, 0, 60), path: store.mbSubstr(f, 0, 500), active: false });
                 }
             }
-            const models = (Array.isArray(body.models) ? body.models : [])
-                .filter((m) => typeof m === 'string' && m.trim() !== '').map((m) => store.mbSubstr(m.trim(), 0, 120));
-            const modelsFull = {};
-            if (body.models_full && typeof body.models_full === 'object') {
+            let models;
+            if (Array.isArray(body.models)) {
+                models = body.models
+                    .filter((m) => typeof m === 'string' && m.trim() !== '')
+                    .map((m) => store.mbSubstr(m.trim(), 0, 120)).slice(0, 400);
+            }
+            let modelsFull;
+            if (body.models_full && typeof body.models_full === 'object' && !Array.isArray(body.models_full)) {
+                modelsFull = {};
                 let count = 0;
                 for (const prov of Object.keys(body.models_full)) {
                     if (count >= 80) break;
@@ -447,10 +452,15 @@ async function handleApi(ctx) {
             const allowCreate = !!body.allowCreateFolders;
             const agents = (Array.isArray(body.agents) ? body.agents : [])
                 .filter((a) => typeof a === 'string' && a.trim() !== '').map((a) => store.mbSubstr(a.trim(), 0, 40)).slice(0, 20);
-            const vision = [...new Set((Array.isArray(body.vision) ? body.vision : [])
-                .filter((m) => typeof m === 'string' && m.trim() !== '').map((m) => store.mbSubstr(m.trim(), 0, 160)))].slice(0, 800);
-            const modelsCtx = {};
-            if (body.models_ctx && typeof body.models_ctx === 'object') {
+            let vision;
+            if (Array.isArray(body.vision)) {
+                vision = [...new Set(body.vision
+                    .filter((m) => typeof m === 'string' && m.trim() !== '')
+                    .map((m) => store.mbSubstr(m.trim(), 0, 160)))].slice(0, 800);
+            }
+            let modelsCtx;
+            if (body.models_ctx && typeof body.models_ctx === 'object' && !Array.isArray(body.models_ctx)) {
+                modelsCtx = {};
                 let count = 0;
                 for (const key of Object.keys(body.models_ctx)) {
                     if (count >= 2000) break;
@@ -461,8 +471,8 @@ async function handleApi(ctx) {
                     count++;
                 }
             }
-            await store.syncCatalog(folders.slice(0, 200), models.slice(0, 400), workspace, allowCreate, agents, modelsFull, vision, modelsCtx, file);
-            return ok({ ok: true, folders: folders.length, models: models.length, models_full: Object.keys(modelsFull).length, agents: agents.length });
+            await store.syncCatalog(folders.slice(0, 200), models, workspace, allowCreate, agents, modelsFull, vision, modelsCtx, file);
+            return ok({ ok: true, folders: folders.length, models: models ? models.length : 0, models_full: modelsFull ? Object.keys(modelsFull).length : 0, agents: agents.length });
         }
         case 'session_import': {
             if (!auth.checkBridgeToken(app, req)) return ok({ ok: false, error: 'Token invalido' }, 401);

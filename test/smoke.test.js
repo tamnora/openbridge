@@ -86,3 +86,23 @@ test('store: ventana de contexto por modelo', async () => {
     assert.equal(await store.modelContext('m/desconocido', paths.catalogFile()), 0);
     fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('store: sync parcial conserva los modelos si el CLI falla', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-'));
+    paths.setHome(dir);
+    paths.ensureDirs();
+    const file = paths.catalogFile();
+    await store.syncCatalog([], ['m/a'], '', false, ['build'], { p: ['m/a'] }, ['m/a'], { 'm/a': 200000 }, file);
+    await store.catalogSetModels(['m/a'], 'm/a', file);
+    // Segundo sync sin campos de modelos (undefined = el CLI no respondio):
+    // debe conservar lo ultimo guardado en vez de vaciar el catalogo.
+    await store.syncCatalog([], undefined, '', false, ['build'], undefined, undefined, undefined, file);
+    const cat = await store.catalogRead(file);
+    assert.deepEqual(cat.models, ['m/a']);
+    assert.deepEqual(cat.models_full, { p: ['m/a'] });
+    assert.deepEqual(cat.vision, ['m/a']);
+    assert.equal(cat.models_ctx['m/a'], 200000);
+    assert.deepEqual(cat.favorites, ['m/a']);
+    assert.equal(cat.default_model, 'm/a');
+    fs.rmSync(dir, { recursive: true, force: true });
+});

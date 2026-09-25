@@ -4,6 +4,17 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Corregido
+
+- El catalogo de modelos ya no se vacia en el hub si `opencode models` falla de
+  forma transitoria: el puente conserva el ultimo catalogo bueno y omite los
+  campos de modelos en el sync; ambos hubs (Node y PHP) preservan lo guardado
+  cuando el campo no viene en el payload.
+- El selector de modelos ya no muestra un modelo duplicado en "favoritos" y en
+  su grupo de proveedor: cada id aparece una sola vez.
+
 ## [0.14.0] - 2026-09-21
 
 

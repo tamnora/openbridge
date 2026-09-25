@@ -451,18 +451,24 @@ function catalogVersion(cat) {
 async function syncCatalog(folders, models, workspace, allowCreateFolder, agents, modelsFull, vision, modelsCtx, file) {
     const fresh = catalogDefault();
     fresh.folders = Array.isArray(folders) ? folders : [];
-    fresh.models = Array.isArray(models) ? models : [];
-    fresh.models_full = (modelsFull && typeof modelsFull === 'object') ? modelsFull : {};
-    fresh.models_ctx = (modelsCtx && typeof modelsCtx === 'object') ? modelsCtx : {};
-    fresh.vision = Array.isArray(vision) ? vision : [];
     fresh.workspace = String(workspace || '');
     fresh.allow_create_folders = !!allowCreateFolder;
     fresh.agents = (Array.isArray(agents) ? agents : []).filter((a) => typeof a === 'string');
     fresh.synced_ts = nowIso();
+    // Campos de modelos opcionales: `undefined` = el puente no los mando (p. ej.
+    // fallo al ejecutar el CLI), por lo que se conserva lo ultimo guardado en vez
+    // de vaciar el catalogo del hub.
+    if (models === undefined) delete fresh.models; else fresh.models = Array.isArray(models) ? models : [];
+    if (modelsFull === undefined) delete fresh.models_full; else fresh.models_full = (modelsFull && typeof modelsFull === 'object') ? modelsFull : {};
+    if (modelsCtx === undefined) delete fresh.models_ctx; else fresh.models_ctx = (modelsCtx && typeof modelsCtx === 'object') ? modelsCtx : {};
+    if (vision === undefined) delete fresh.vision; else fresh.vision = Array.isArray(vision) ? vision : [];
     await catalogModify(file, (cat) => {
         const keep = {};
-        for (const k of ['commands', 'requests', 'nextCommandId', 'nextRequestId', 'favorites', 'default_model']) {
-            if (cat[k] !== undefined) keep[k] = cat[k];
+        for (const k of Object.keys(cat)) {
+            // Preserva colas/favoritos y cualquier campo opcional no enviado.
+            if (!(k in fresh) || ['commands', 'requests', 'nextCommandId', 'nextRequestId', 'favorites', 'default_model'].indexOf(k) >= 0) {
+                keep[k] = cat[k];
+            }
         }
         for (const k of Object.keys(cat)) delete cat[k];
         Object.assign(cat, fresh, keep);

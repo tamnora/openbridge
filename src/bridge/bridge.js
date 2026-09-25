@@ -854,11 +854,13 @@ function streamCli(args, opts, onPartial) {
     });
 }
 
+// Devuelve la lista plana de modelos, o null si el CLI fallo (distinto de
+// "no hay modelos": null permite conservar el ultimo catalogo bueno).
 async function listModels() {
     const r = await runCli(['models'], { timeout: 60000 });
     if (!r.ok) {
         log('aviso: no se pudo listar modelos: ' + (r.text || r.code));
-        return [];
+        return null;
     }
     return r.text.split(/\r?\n/)
         .map((l) => l.trim())
@@ -881,6 +883,14 @@ async function getModelsFull(force) {
         return modelsFullCache;
     }
     const list = await listModels();
+    // Fallo del CLI: no pisar el catalogo cacheado (ni el del hub) con vacio.
+    if (list === null) {
+        if (modelsFullCache) {
+            log('aviso: fallo al listar modelos; conservo el catalogo anterior');
+            return modelsFullCache;
+        }
+        return null;
+    }
     const groups = {};
     for (const id of list) {
         const slash = id.indexOf('/');
@@ -888,6 +898,11 @@ async function getModelsFull(force) {
         const prov = id.slice(0, slash);
         if (!groups[prov]) groups[prov] = [];
         groups[prov].push(id);
+    }
+    // Salida vacia con cache previo no vacio: probablemente transitorio; conservar.
+    if (!list.length && modelsFullCache && modelsFullCache.total) {
+        log('aviso: "opencode models" devolvio vacio; conservo el catalogo anterior');
+        return modelsFullCache;
     }
     modelsFullCache = { groups: groups, total: list.length, at: Date.now() };
     return modelsFullCache;
@@ -947,16 +962,24 @@ async function getModelCaps(force) {
     const r = await runCli(['models', '--verbose'], { timeout: 120000 });
     if (!r.ok) {
         log('aviso: no se pudieron leer las capacidades de modelos: ' + (r.text || r.code).slice(0, 100));
-        return modelsCapsCache ? modelsCapsCache.caps : {};
+        return modelsCapsCache ? modelsCapsCache.caps : null;
     }
-    modelsCapsCache = { caps: parseModelsVerbose(r.text), at: Date.now() };
-    const vis = Object.keys(modelsCapsCache.caps).filter((k) => modelsCapsCache.caps[k].vision);
-    log('capacidades: ' + Object.keys(modelsCapsCache.caps).length + ' modelos, ' + vis.length + ' con visión');
-    return modelsCapsCache.caps;
+    const caps = parseModelsVerbose(r.text);
+    // Sin capacidades parseadas pero con cache previo: conservar (formato cambió
+    // o salida parcial) en vez de borrar vision/contexto en el hub.
+    if (!Object.keys(caps).length && modelsCapsCache && Object.keys(modelsCapsCache.caps).length) {
+        log('aviso: capacidades vacias; conservo las anteriores');
+        return modelsCapsCache.caps;
+    }
+    modelsCapsCache = { caps: caps, at: Date.now() };
+    const vis = Object.keys(caps).filter((k) => caps[k].vision);
+    log('capacidades: ' + Object.keys(caps).length + ' modelos, ' + vis.length + ' con visión');
+    return caps;
 }
 
 // Favoritos de config.json (o todos si no hay configurados), validados contra
 // la lista completa si ya está cacheada (sin volver a ejecutar el CLI).
+// Devuelve null si no hay favoritos y el CLI no pudo listar nada.
 async function resolveModels() {
     const curated = Array.isArray(config.models)
         ? config.models.filter((m) => typeof m === 'string' && m.includes('/')).map((m) => m.trim())
@@ -965,7 +988,7 @@ async function resolveModels() {
     if (!curated.length) {
         if (available && available.length) return available;
         const full = await getModelsFull();
-        return flattenModels(full.groups);
+        return full ? flattenModels(full.groups) : null;
     }
     if (available && available.length) {
         const missing = curated.filter((m) => !available.includes(m));
@@ -1133,7 +1156,7 @@ async function runMessage(msg) {
     if (name === 'models') {
         log('comando /models' + (slash.arg ? ' (filtro: ' + slash.arg + ')' : ''));
         const full = await getModelsFull();
-        const flat = flattenModels(full.groups);
+        const flat = full ? flattenModels(full.groups) : [];
         const filtro = (slash.arg || '').trim().toLowerCase();
         let text;
         if (!flat.length) {
@@ -1442,22 +1465,25 @@ async function syncCatalog(opts) {
         const models = await resolveModels();
         const agents = resolveAgents();
         const caps = await getModelCaps();
-        const vision = Object.keys(caps).filter((k) => caps[k].vision);
-        const modelsCtx = {};
-        for (const k of Object.keys(caps)) {
-            const c = caps[k] && caps[k].ctx;
-            if (typeof c === 'number' && c > 0) modelsCtx[k] = c;
-        }
         const payload = {
             folders: folders,
-            models: models,
-            models_full: full.groups,
-            models_ctx: modelsCtx,
-            vision: vision,
             workspace: config.workspace || '',
             allowCreateFolders: !!config.allowCreateFolders,
             agents: agents,
         };
+        // Los campos de modelos solo se envian si el CLI respondio. Si no, se
+        // omiten para que el hub conserve el ultimo catalogo bueno (no vaciarlo).
+        if (models !== null) payload.models = models;
+        if (full) payload.models_full = full.groups;
+        if (caps) {
+            payload.vision = Object.keys(caps).filter((k) => caps[k].vision);
+            const modelsCtx = {};
+            for (const k of Object.keys(caps)) {
+                const c = caps[k] && caps[k].ctx;
+                if (typeof c === 'number' && c > 0) modelsCtx[k] = c;
+            }
+            payload.models_ctx = modelsCtx;
+        }
         let res = null;
         for (const t of activeTargets()) {
             try {
@@ -1469,11 +1495,13 @@ async function syncCatalog(opts) {
         }
         if (!res) res = { folders: 0, models: 0, agents: 0 };
         if (!opts || !opts.silent) {
-            log('catálogo sincronizado: ' + res.folders + ' carpetas, ' + (full.total || 0) + ' modelos en '
-                + Object.keys(full.groups).length + ' proveedores (' + res.models + ' favoritos), ' + res.agents + ' agentes' +
+            const totalModels = full ? full.total : 0;
+            const providers = full ? Object.keys(full.groups).length : 0;
+            log('catálogo sincronizado: ' + res.folders + ' carpetas, ' + totalModels + ' modelos en '
+                + providers + ' proveedores (' + res.models + ' favoritos), ' + res.agents + ' agentes' +
                 (config.allowCreateFolders ? ' · creacion remota: ON' : ' · creacion remota: OFF'));
             log('workspace: ' + (config.workspace || '(sin definir)'));
-            log('favoritos (' + models.length + '): ' + models.join(', '));
+            log('favoritos (' + (models ? models.length : 0) + '): ' + (models ? models.join(', ') : '(sin datos)'));
             log('agentes (' + agents.length + '): ' + agents.join(', '));
         }
     } catch (e) {

@@ -1574,20 +1574,43 @@ function catalog_modify($fn, $file = CATALOG_FILE) {
 function sync_catalog($folders, $models, $workspace, $allowCreateFolder, $agents = ['build', 'plan'], $modelsFull = null, $vision = null, $modelsCtx = null, $file = CATALOG_FILE) {
     $fresh = catalog_default();
     $fresh['folders'] = array_values($folders);
-    $fresh['models'] = array_values($models);
-    $fresh['models_full'] = is_array($modelsFull) ? $modelsFull : [];
-    $fresh['vision'] = is_array($vision) ? array_values($vision) : [];
-    $fresh['models_ctx'] = is_array($modelsCtx) ? $modelsCtx : [];
     $fresh['workspace'] = (string)$workspace;
     $fresh['allow_create_folders'] = (bool)$allowCreateFolder;
     $fresh['agents'] = array_values(array_filter((array)$agents, 'is_string'));
     $fresh['synced_ts'] = gmdate('c');
+    // Campos de modelos opcionales: null = el puente no los mando (p. ej. fallo
+    // al ejecutar el CLI), por lo que se conserva lo ultimo guardado en vez de
+    // vaciar el catalogo del hub.
+    if ($models !== null) {
+        $fresh['models'] = array_values($models);
+    } else {
+        unset($fresh['models']);
+    }
+    if ($modelsFull !== null) {
+        $fresh['models_full'] = is_array($modelsFull) ? $modelsFull : [];
+    } else {
+        unset($fresh['models_full']);
+    }
+    if ($vision !== null) {
+        $fresh['vision'] = is_array($vision) ? array_values($vision) : [];
+    } else {
+        unset($fresh['vision']);
+    }
+    if ($modelsCtx !== null) {
+        $fresh['models_ctx'] = is_array($modelsCtx) ? $modelsCtx : [];
+    } else {
+        unset($fresh['models_ctx']);
+    }
     // La sincronización reemplaza carpetas/modelos, NUNCA la cola del puente:
-    // preserva comandos y solicitudes en curso (y sus contadores).
+    // preserva comandos y solicitudes en curso (y sus contadores), los favoritos
+    // y los campos de modelos no enviados.
     $ok = catalog_modify(function (&$cat) use ($fresh) {
         $keep = [];
-        foreach (['commands', 'requests', 'nextCommandId', 'nextRequestId', 'favorites', 'default_model'] as $k) {
-            if (isset($cat[$k])) $keep[$k] = $cat[$k];
+        foreach ($cat as $k => $v) {
+            if (in_array($k, ['commands', 'requests', 'nextCommandId', 'nextRequestId', 'favorites', 'default_model'], true)
+                || !array_key_exists($k, $fresh)) {
+                $keep[$k] = $v;
+            }
         }
         $cat = array_merge($fresh, $keep);
     }, $file);

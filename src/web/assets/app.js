@@ -2609,11 +2609,14 @@ function fillModelOptions(select, searchInput, current, onResult) {
     var vision = Array.isArray(c.vision) ? c.vision : [];
     var q = searchInput ? String(searchInput.value || '').trim().toLowerCase() : '';
     function matches(id) { return !q || id.toLowerCase().indexOf(q) >= 0; }
+    var seen = {};
     function addGroup(label, ids, prefix) {
         var og = document.createElement('optgroup');
         og.label = label;
         for (var i = 0; i < ids.length; i++) {
             var id = ids[i];
+            if (seen[id]) continue;
+            seen[id] = 1;
             var o = document.createElement('option');
             o.value = id;
             o.textContent = (vision.indexOf(id) >= 0 ? '👁 ' : '')
@@ -2629,7 +2632,8 @@ function fillModelOptions(select, searchInput, current, onResult) {
     var provs = Object.keys(groups).sort(function (a, b) { return a.localeCompare(b); });
     for (var i = 0; i < provs.length; i++) {
         var p = provs[i];
-        var list = (Array.isArray(groups[p]) ? groups[p] : []).filter(matches);
+        var list = (Array.isArray(groups[p]) ? groups[p] : []).filter(matches)
+            .filter(function (id) { return !seen[id]; });
         if (!list.length) continue;
         addGroup(p + ' (' + list.length + ')', list, p);
         total += list.length;
