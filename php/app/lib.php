@@ -1395,6 +1395,7 @@ function catalog_default() {
         'default_model' => '',
         'models_full' => [],
         'models_ctx' => [],
+        'models_names' => [],
         'vision' => [],
         'workspace' => '',
         'allow_create_folders' => false,
@@ -1571,7 +1572,7 @@ function catalog_modify($fn, $file = CATALOG_FILE) {
 // $modelsCtx: mapa {id: contexto_en_tokens} (lo lee la web de OpenBridge).
 // $vision: lista de modelos que aceptan imagenes.
 // $file es el catálogo del puente que sincroniza (ver bridge_catalog_file()).
-function sync_catalog($folders, $models, $workspace, $allowCreateFolder, $agents = ['build', 'plan'], $modelsFull = null, $vision = null, $modelsCtx = null, $file = CATALOG_FILE) {
+function sync_catalog($folders, $models, $workspace, $allowCreateFolder, $agents = ['build', 'plan'], $modelsFull = null, $vision = null, $modelsCtx = null, $modelsNames = null, $file = CATALOG_FILE) {
     $fresh = catalog_default();
     $fresh['folders'] = array_values($folders);
     $fresh['workspace'] = (string)$workspace;
@@ -1600,6 +1601,11 @@ function sync_catalog($folders, $models, $workspace, $allowCreateFolder, $agents
         $fresh['models_ctx'] = is_array($modelsCtx) ? $modelsCtx : [];
     } else {
         unset($fresh['models_ctx']);
+    }
+    if ($modelsNames !== null) {
+        $fresh['models_names'] = is_array($modelsNames) ? $modelsNames : [];
+    } else {
+        unset($fresh['models_names']);
     }
     // La sincronización reemplaza carpetas/modelos, NUNCA la cola del puente:
     // preserva comandos y solicitudes en curso (y sus contadores), los favoritos

@@ -416,6 +416,7 @@ function catalogDefault() {
         default_model: '',
         models_full: {},
         models_ctx: {},
+        models_names: {},
         vision: [],
         workspace: '',
         allow_create_folders: false,
@@ -448,7 +449,7 @@ function catalogVersion(cat) {
     }
     return md5(JSON.stringify(sig));
 }
-async function syncCatalog(folders, models, workspace, allowCreateFolder, agents, modelsFull, vision, modelsCtx, file) {
+async function syncCatalog(folders, models, workspace, allowCreateFolder, agents, modelsFull, vision, modelsCtx, modelsNames, file) {
     const fresh = catalogDefault();
     fresh.folders = Array.isArray(folders) ? folders : [];
     fresh.workspace = String(workspace || '');
@@ -461,6 +462,7 @@ async function syncCatalog(folders, models, workspace, allowCreateFolder, agents
     if (models === undefined) delete fresh.models; else fresh.models = Array.isArray(models) ? models : [];
     if (modelsFull === undefined) delete fresh.models_full; else fresh.models_full = (modelsFull && typeof modelsFull === 'object') ? modelsFull : {};
     if (modelsCtx === undefined) delete fresh.models_ctx; else fresh.models_ctx = (modelsCtx && typeof modelsCtx === 'object') ? modelsCtx : {};
+    if (modelsNames === undefined) delete fresh.models_names; else fresh.models_names = (modelsNames && typeof modelsNames === 'object') ? modelsNames : {};
     if (vision === undefined) delete fresh.vision; else fresh.vision = Array.isArray(vision) ? vision : [];
     await catalogModify(file, (cat) => {
         const keep = {};

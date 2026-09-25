@@ -943,6 +943,7 @@ function parseModelsVerbose(text) {
                 const id = cur || (typeof j.id === 'string' && j.id.includes('/') ? j.id : null);
                 if (id) {
                     caps[id] = {
+                        name: (typeof j.name === 'string') ? j.name.trim() : '',
                         vision: !!(j.capabilities && j.capabilities.input && j.capabilities.input.image),
                         attachment: !!(j.capabilities && j.capabilities.attachment),
                         ctx: (j.limit && j.limit.context) || 0,
@@ -1478,11 +1479,14 @@ async function syncCatalog(opts) {
         if (caps) {
             payload.vision = Object.keys(caps).filter((k) => caps[k].vision);
             const modelsCtx = {};
+            const modelsNames = {};
             for (const k of Object.keys(caps)) {
-                const c = caps[k] && caps[k].ctx;
-                if (typeof c === 'number' && c > 0) modelsCtx[k] = c;
+                const c = caps[k] || {};
+                if (typeof c.ctx === 'number' && c.ctx > 0) modelsCtx[k] = c.ctx;
+                if (typeof c.name === 'string' && c.name !== '') modelsNames[k] = c.name;
             }
             payload.models_ctx = modelsCtx;
+            payload.models_names = modelsNames;
         }
         let res = null;
         for (const t of activeTargets()) {

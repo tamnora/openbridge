@@ -273,7 +273,7 @@ function updateStatusbar() {
     els.sbDot.title = on ? 'puente en línea' : 'puente apagado';
     var s = state.currentSession;
     if (s) {
-        els.sbModel.textContent = (s.model || 'sin modelo') + ' · ' + (s.agent || 'build');
+        els.sbModel.textContent = (modelLabel(s.model) || 'sin modelo') + ' · ' + (s.agent || 'build');
         els.sbModel.title = 'Cambiar modelo / agente de “' + (s.name || 'chat') + '”';
     } else if (state.catalog && state.catalog.workspace) {
         els.sbModel.textContent = shortPath(state.catalog.workspace);
@@ -863,6 +863,19 @@ function modelContext(model) {
     var map = (c.models_ctx && typeof c.models_ctx === 'object') ? c.models_ctx : {};
     var v = map[model];
     return (typeof v === 'number' && v > 0) ? v : 0;
+}
+
+// Nombre visible del modelo segun opencode ('' si el catalogo no lo trae).
+function modelName(model) {
+    var c = state.catalog || {};
+    var map = (c.models_names && typeof c.models_names === 'object') ? c.models_names : {};
+    var v = map[model];
+    return (typeof v === 'string' && v) ? v : '';
+}
+
+// Texto a mostrar para un modelo: nombre visible o, si no hay, el id.
+function modelLabel(model) {
+    return modelName(model) || model || '';
 }
 
 // Etiqueta "consumidos/capacidad" en texto plano ('' si no hay datos).
@@ -1654,7 +1667,7 @@ function renderHome(sessions) {
                 html += '<div class="card" data-sid="' + s.id + '">'
                     + '<div class="grow">'
                     + '<div class="cname">' + esc(s.name) + '</div>'
-                    + '<div class="cmeta">' + busy + esc(s.model || 'sin modelo') + ' · ' + esc(s.agent || 'build') + '</div>'
+                    + '<div class="cmeta">' + busy + esc(modelLabel(s.model) || 'sin modelo') + ' · ' + esc(s.agent || 'build') + '</div>'
                     + (s.preview ? '<div class="cpreview">' + prev + '</div>' : '')
                     + '</div>'
                     + (isAdmin() && !s.importada ? '<button type="button" class="kebab" aria-label="Opciones" title="Opciones">⋮</button>' : '')
@@ -2526,7 +2539,7 @@ function renderHistList() {
         html += '<div class="card" data-sid="' + s.id + '">'
             + '<div class="grow">'
             + '<div class="cname">' + esc(s.name) + '</div>'
-            + '<div class="cmeta">' + busy + esc(s.model || 'sin modelo') + ' · ' + esc(s.agent || 'build') + ' · ' + esc(timeShort(s.last_ts)) + '</div>'
+            + '<div class="cmeta">' + busy + esc(modelLabel(s.model) || 'sin modelo') + ' · ' + esc(s.agent || 'build') + ' · ' + esc(timeShort(s.last_ts)) + '</div>'
             + (s.preview ? '<div class="cpreview">' + esc(s.preview) + '</div>' : '')
             + '</div>'
             + '</div>';
@@ -2619,8 +2632,10 @@ function fillModelOptions(select, searchInput, current, onResult) {
             seen[id] = 1;
             var o = document.createElement('option');
             o.value = id;
+            o.title = id;
+            var nm = modelName(id);
             o.textContent = (vision.indexOf(id) >= 0 ? '👁 ' : '')
-                + (prefix && id.indexOf(prefix + '/') === 0 ? id.slice(prefix.length + 1) : id);
+                + (nm || (prefix && id.indexOf(prefix + '/') === 0 ? id.slice(prefix.length + 1) : id));
             og.appendChild(o);
         }
         select.appendChild(og);
@@ -2879,7 +2894,8 @@ function renderModelFavs() {
             def.textContent = (m === state.modelDefault ? '★' : '☆');
             def.addEventListener('click', function () { state.modelDefault = m; renderModelFavs(); });
             var name = document.createElement('span');
-            name.textContent = m;
+            name.textContent = modelLabel(m);
+            name.title = m;
             var rm = document.createElement('button');
             rm.type = 'button';
             rm.title = 'quitar';
@@ -4105,7 +4121,7 @@ function renderSessionsView() {
             html += '<div class="card" data-sid="' + s.session_id + '">'
                 + '<div class="grow">'
                 + '<div class="cname">' + esc(s.name) + '</div>'
-                + '<div class="cmeta">' + esc(shortPath(s.folder)) + ' · ' + esc(s.model || 'sin modelo') + ' · ' + esc(s.agent) + '</div>'
+                + '<div class="cmeta">' + esc(shortPath(s.folder)) + ' · ' + esc(modelLabel(s.model) || 'sin modelo') + ' · ' + esc(s.agent) + '</div>'
                 + (s.opencode_session ? '<div class="cmeta code">oc: ' + esc(s.opencode_session.slice(0, 16)) + '…</div>' : '<div class="cmeta" style="color:var(--muted)">sin opencode_session</div>')
                 + '</div>'
                 + '<button type="button" class="linkbtn" data-open="' + s.session_id + '" title="Abrir">abrir</button>'

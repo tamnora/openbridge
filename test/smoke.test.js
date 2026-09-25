@@ -70,7 +70,7 @@ test('store: catalogo por puente', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-'));
     paths.setHome(dir);
     paths.ensureDirs();
-    await store.syncCatalog([{ name: 'proj', path: 'C:\\proj' }], ['m/a'], 'C:\\', true, ['build', 'plan'], {}, [], {}, paths.bridgeCatalogFile('pc2'));
+    await store.syncCatalog([{ name: 'proj', path: 'C:\\proj' }], ['m/a'], 'C:\\', true, ['build', 'plan'], {}, [], {}, {}, paths.bridgeCatalogFile('pc2'));
     assert.notEqual(await store.folderPathInCatalog('C:\\proj', paths.bridgeCatalogFile('pc2')), null);
     assert.equal(await store.folderPathInCatalog('C:\\proj', paths.bridgeCatalogFile('pc1')), null);
     assert.equal(await store.modelInCatalog('m/a', paths.bridgeCatalogFile('pc2')), true);
@@ -81,7 +81,7 @@ test('store: ventana de contexto por modelo', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-'));
     paths.setHome(dir);
     paths.ensureDirs();
-    await store.syncCatalog([], ['m/a'], '', false, ['build'], {}, [], { 'm/a': 200000 }, paths.catalogFile());
+    await store.syncCatalog([], ['m/a'], '', false, ['build'], {}, [], { 'm/a': 200000 }, {}, paths.catalogFile());
     assert.equal(await store.modelContext('m/a', paths.catalogFile()), 200000);
     assert.equal(await store.modelContext('m/desconocido', paths.catalogFile()), 0);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -92,16 +92,17 @@ test('store: sync parcial conserva los modelos si el CLI falla', async () => {
     paths.setHome(dir);
     paths.ensureDirs();
     const file = paths.catalogFile();
-    await store.syncCatalog([], ['m/a'], '', false, ['build'], { p: ['m/a'] }, ['m/a'], { 'm/a': 200000 }, file);
+    await store.syncCatalog([], ['m/a'], '', false, ['build'], { p: ['m/a'] }, ['m/a'], { 'm/a': 200000 }, { 'm/a': 'Modelo A' }, file);
     await store.catalogSetModels(['m/a'], 'm/a', file);
     // Segundo sync sin campos de modelos (undefined = el CLI no respondio):
     // debe conservar lo ultimo guardado en vez de vaciar el catalogo.
-    await store.syncCatalog([], undefined, '', false, ['build'], undefined, undefined, undefined, file);
+    await store.syncCatalog([], undefined, '', false, ['build'], undefined, undefined, undefined, undefined, file);
     const cat = await store.catalogRead(file);
     assert.deepEqual(cat.models, ['m/a']);
     assert.deepEqual(cat.models_full, { p: ['m/a'] });
     assert.deepEqual(cat.vision, ['m/a']);
     assert.equal(cat.models_ctx['m/a'], 200000);
+    assert.equal(cat.models_names['m/a'], 'Modelo A');
     assert.deepEqual(cat.favorites, ['m/a']);
     assert.equal(cat.default_model, 'm/a');
     fs.rmSync(dir, { recursive: true, force: true });

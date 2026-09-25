@@ -471,7 +471,20 @@ async function handleApi(ctx) {
                     count++;
                 }
             }
-            await store.syncCatalog(folders.slice(0, 200), models, workspace, allowCreate, agents, modelsFull, vision, modelsCtx, file);
+            let modelsNames;
+            if (body.models_names && typeof body.models_names === 'object' && !Array.isArray(body.models_names)) {
+                modelsNames = {};
+                let count = 0;
+                for (const key of Object.keys(body.models_names)) {
+                    if (count >= 2000) break;
+                    if (typeof key !== 'string' || key.trim() === '') continue;
+                    const v = body.models_names[key];
+                    if (typeof v !== 'string' || v.trim() === '') continue;
+                    modelsNames[store.mbSubstr(key.trim(), 0, 160)] = store.mbSubstr(v.trim(), 0, 120);
+                    count++;
+                }
+            }
+            await store.syncCatalog(folders.slice(0, 200), models, workspace, allowCreate, agents, modelsFull, vision, modelsCtx, modelsNames, file);
             return ok({ ok: true, folders: folders.length, models: models ? models.length : 0, models_full: modelsFull ? Object.keys(modelsFull).length : 0, agents: agents.length });
         }
         case 'session_import': {

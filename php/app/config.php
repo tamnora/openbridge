@@ -129,7 +129,7 @@ if (!is_dir(DATA_DIR)) {
 }
 foreach ([
     'sessions' => ['sessions' => [], 'nextId' => 1],
-    'catalog' => ['folders' => [], 'models' => [], 'models_full' => [], 'models_ctx' => [], 'vision' => [], 'workspace' => '', 'allow_create_folders' => false, 'agents' => ['build', 'plan'], 'synced_ts' => null, 'requests' => [], 'nextRequestId' => 1, 'commands' => [], 'nextCommandId' => 1],
+    'catalog' => ['folders' => [], 'models' => [], 'models_full' => [], 'models_ctx' => [], 'models_names' => [], 'vision' => [], 'workspace' => '', 'allow_create_folders' => false, 'agents' => ['build', 'plan'], 'synced_ts' => null, 'requests' => [], 'nextRequestId' => 1, 'commands' => [], 'nextCommandId' => 1],
     'bridges' => ['version' => 2, 'bridges' => []],
     'pairings' => ['version' => 1, 'pending' => []],
     'push' => ['subscriptions' => []],

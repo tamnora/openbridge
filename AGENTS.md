@@ -62,6 +62,10 @@ Antes de cerrar un cambio, corre `npm test` y `npm run lint`.
   tamano + rename (el hosting aborta transferencias grandes con `451`).
 - No commitear `.deploy.env`, `.deploy-cache/` ni `backups/` (gitignored).
 - Mantener `TODO.md` y `CHANGELOG.md` al dia cuando cierres un pendiente.
+- **Version del hub = version de `package.json`**: cada vez que se bumpea la
+  version del paquete (release), rearmar `php/dist` con
+  `node scripts/build-php-hub.mjs` (regenera `version.txt`) y **desplegar el hub**
+  (`npm run deploy:hub -- sync`) para que el hosting muestre la misma version.
 - No hacer commit ni push salvo que el usuario lo pida.
 
 ## Release (privado)
@@ -84,6 +88,11 @@ Actualiza `package.json` y `CHANGELOG.md`, commitea `chore(release): vX.Y.Z`,
 taggea `vX.Y.Z`, hace push a GitHub y publica en npm. Para promover un
 prerelease a produccion:
 `npm dist-tag add @danieltmn/openbridge@X.Y.Z latest`.
+
+Al bumpear la version hay que actualizar **tambien el hub**: `build-php-hub`
+regenera `php/dist/version.txt` desde `package.json`, asi que rearmar
+(`node scripts/build-php-hub.mjs`) y desplegar (`npm run deploy:hub -- sync`)
+para que el hosting muestre la version del paquete.
 
 ## Deploy del hub (privado)
 

@@ -168,15 +168,16 @@ test('hub PHP: login, pairing y aislamiento por usuario', { skip: hasPhp ? false
     const syncRes = await fetch(base + '/api.php?action=sync_catalog', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Bridge-Token': poll.json.bridge_token, 'X-Bridge-Id': 'pc1' },
-        body: JSON.stringify({ folders: [{ name: 'demo', path: 'C:/demo' }], models: ['p/m'], models_full: { p: ['p/m'] }, workspace: 'C:/demo', allowCreateFolders: false, agents: ['build', 'plan'], vision: [], models_ctx: { 'p/m': 200000 } }),
+        body: JSON.stringify({ folders: [{ name: 'demo', path: 'C:/demo' }], models: ['p/m'], models_full: { p: ['p/m'] }, workspace: 'C:/demo', allowCreateFolders: false, agents: ['build', 'plan'], vision: [], models_ctx: { 'p/m': 200000 }, models_names: { 'p/m': 'Modelo P' } }),
     });
     const syncJson = await syncRes.json();
     assert.equal(syncJson.ok, true);
 
-    // El catalogo de pc1 quedo con models_ctx (formato de OpenBridge).
+    // El catalogo de pc1 quedo con models_ctx y models_names (formato de OpenBridge).
     const cat = await api('catalog&bridge=pc1', { cookie: admin.cookie });
     assert.equal(cat.json.ok, true);
     assert.equal(cat.json.catalog.models_ctx['p/m'], 200000);
+    assert.equal(cat.json.catalog.models_names['p/m'], 'Modelo P');
 
     // Import legacy: dedupe por oc_msg (sigue soportado).
     const impBody = (messages) => ({ opencode_session: 'ses_test0001', folder: 'C:/demo', name: 'Chat', messages });

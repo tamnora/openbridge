@@ -4,6 +4,15 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- El hub muestra el **nombre visible** de cada modelo (p. ej. "DeepSeek V4.1
+  Flash") en vez del id (`deepseek-flash`): el puente extrae `name` de
+  `opencode models --verbose` y lo sincroniza como `models_names` (picker,
+  favoritos, sidebar y tarjetas de sesion, con fallback al id).
+
 ## [0.14.1] - 2026-09-25
 
 

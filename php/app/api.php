@@ -491,7 +491,22 @@ if ($action === 'sync_catalog') {
             if (count($modelsCtx) >= 2000) break;
         }
     }
-    if (!sync_catalog($folders, $hasModels ? $models : null, $workspace, $allowCreate, $agents, $hasModelsFull ? $modelsFull : null, $hasVision ? $vision : null, $hasModelsCtx ? $modelsCtx : null, $file)) {
+    // Nombres visibles por modelo: {id: "DeepSeek V4.1 Flash"}.
+    $hasModelsNames = array_key_exists('models_names', $body);
+    $modelsNames = [];
+    if ($hasModelsNames) {
+        foreach ((array)($body['models_names'] ?? []) as $id => $v) {
+            if (!is_string($id) || trim($id) === '') {
+                continue;
+            }
+            if (!is_string($v) || trim($v) === '') {
+                continue;
+            }
+            $modelsNames[mb_substr(trim($id), 0, 160)] = mb_substr(trim($v), 0, 120);
+            if (count($modelsNames) >= 2000) break;
+        }
+    }
+    if (!sync_catalog($folders, $hasModels ? $models : null, $workspace, $allowCreate, $agents, $hasModelsFull ? $modelsFull : null, $hasVision ? $vision : null, $hasModelsCtx ? $modelsCtx : null, $hasModelsNames ? $modelsNames : null, $file)) {
         json_response(['ok' => false, 'error' => 'No se pudo guardar'], 500);
     }
     json_response(['ok' => true, 'folders' => count($folders), 'models' => $hasModels ? count($models) : 0, 'models_full' => $hasModelsFull ? count($modelsFull) : 0, 'agents' => count($agents)]);
