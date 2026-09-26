@@ -69,6 +69,25 @@ OpenBridge. La CLI pasa la **base** (`--dir`/cwd) al puente via
    el refresco final.
 6. El server empuja un Web Push y el celular refresca por SSE/poll.
 
+## Frontend web (`src/web/assets/app.js` + `templates/chat.html`)
+
+El chat muestra las sesiones abiertas como **pestañas** (`state.openTabs`,
+persistidas en `localStorage`, boton de cerrar y punto de estado). Cada pestaña
+tiene su propio panel `.messages` dentro de `#messagesHost`, en memoria hasta
+cerrarla: cambiar de pestaña conserva DOM y scroll (no re-renderiza), y el
+historial que llega tarde se renderiza en el panel de su sesion aunque no sea la
+activa. El front se comparte con el hub PHP (se copia en `php/dist`, ver
+`scripts/build-php-hub.mjs`).
+
+El texto del agente se renderiza con un markdown propio, sin dependencias
+(`mdBlocks`/`mdInline`): encabezados, listas (anidadas y `- [ ]`), citas,
+tablas con alineacion, autolinks, imagenes, negrita/cursiva/tachado y fences con
+resaltado (`hlCode`). Las **tool cards** renderizan el `state` que manda el
+puente: `status`/`title`/`input`/`output`, el `metadata.diff` (con
+`metadata.filepath`) via `renderDiff`, y la duracion (`state.time`). El proxy de
+historial (`normalizeExport`) agrega la duracion del turno (`info.time.completed`
+- `created`) y `tokens_cache` (`cache.read`+`write`) por sesion.
+
 ## Multi-PC
 
 El hub corre la app; cada PC corre `openbridge bridge` (o `openbridge join <url>`,
@@ -140,13 +159,16 @@ local como en remoto:
 Las rutas se validan contra el workspace (`procResolveFolder`/`resolveInWorkspace`)
 y los argumentos con una whitelist (`OC_ALLOWED`). `proc_detect` es read-only:
 inspecciona el proyecto (`package.json`, `composer.json`/`artisan`, entrypoints
-PHP) y devuelve los comandos sugeridos para correrlo en dev.
+PHP) y devuelve los comandos sugeridos para correrlo en dev. Para Node elige el
+gestor por `packageManager` y, si no, por el lockfile (`pnpm-lock.yaml`,
+`yarn.lock`, `bun.lockb`/`bun.lock`; default `npm`).
 
 `proc_start` solo ejecuta binarios de `bridge/config.json → processes.allow` (ya
-incluye `php`/`python`/`composer`; una config con el default viejo `npm`/`node`/
-`npx` se actualiza sola al actualizar OpenBridge, y los allow personalizados se
-respetan); `processes.bins` mapea un nombre a una ruta absoluta para ejecutables
-fuera del `PATH`. Corre sin shell y con `cwd` dentro del workspace.
+incluye `php`/`python`/`composer` y los gestores `pnpm`/`yarn`/`bun`/`bunx`; una
+config con un default viejo se actualiza sola al actualizar OpenBridge, y los
+allow personalizados se respetan); `processes.bins` mapea un nombre a una ruta
+absoluta para ejecutables fuera del `PATH`. Corre sin shell y con `cwd` dentro
+del workspace.
 
 ## Decisiones
 

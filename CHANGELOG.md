@@ -4,6 +4,33 @@ Todos los cambios relevantes de OpenBridge. Formato basado en
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 [Versionado Semantico](https://semver.org/lang/es/).
 
+## [Unreleased]
+
+### Agregado
+
+- **Dev run: gestores de paquetes**. `proc_detect` detecta `pnpm`/`yarn`/`bun`
+  por el campo `packageManager` de `package.json` y, si no, por el lockfile
+  (`pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`/`bun.lock`; `npm` sigue siendo el
+  default) y sugiere el comando con el gestor correcto (`pnpm run dev`,
+  `bun start`, ...). Se suman `bun`/`bunx` a `processes.allow`; las configs con
+  defaults viejos se migran solas.
+- **Pestañas de sesiones**. La web muestra las sesiones abiertas como pestañas
+  (nombre, punto de estado y cerrar), se recuerdan en `localStorage`, se puede
+  cambiar entre ellas, cerrar la activa pasa a la vecina y se actualizan solas
+  con el sidebar. Cada pestaña mantiene su **conversación en memoria** (DOM y
+  scroll propios): al saltar entre pestañas no se re-renderiza ni se pierde la
+  posición, y se libera al cerrar la pestaña. Se corrigió además el reemplazo
+  incremental de un mensaje que había cambiado (`replaceChild` dejaba el nodo en
+  `null`).
+- **Formato de mensajes**. El markdown del chat ahora renderiza tablas (con
+  alineación), URLs desnudas como enlaces, imágenes `![alt](url)`, listas
+  anidadas y de continuación, `- [ ]`/`- [x]` como casillas, encabezados h5/h6 y
+  mejor espaciado de párrafos/listas.
+- **Datos de opencode**. Las tool cards muestran el diff unificado de las
+  ediciones (con la ruta del archivo) y su duración; cada turno muestra su
+  duración (`time.completed`) y el medidor de contexto incluye los tokens de
+  cache (`cache.read`/`write`) en el detalle.
+
 ## [0.14.2] - 2026-09-25
 
 

@@ -238,7 +238,7 @@ function loadConfig() {
                 // bins mapea un nombre a una ruta (p. ej. php fuera del PATH).
                 processes: {
                     enabled: true,
-                    allow: ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'],
+                    allow: ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn', 'bun', 'bunx'],
                     maxGlobal: 3,
                     bins: {},
                 },
@@ -1734,12 +1734,16 @@ function normalizeExport(data) {
         }
         if (!parts.length) continue;
         if (role === 'user' && info.agent) lastAgent = info.agent;
-        const ts = info.time && info.time.created ? new Date(Number(info.time.created)).toISOString() : '';
+        const created = info.time && info.time.created ? Number(info.time.created) : 0;
+        const completed = info.time && info.time.completed ? Number(info.time.completed) : 0;
+        const ts = created ? new Date(created).toISOString() : '';
         out.push({
             role,
             ts,
             oc_msg: info.id ? String(info.id) : '',
             agent: role === 'assistant' ? (info.agent || lastAgent) : (info.agent || ''),
+            // Duracion del turno (ms) cuando opencode trae time.completed.
+            dur: (created && completed && completed >= created) ? (completed - created) : 0,
             parts,
         });
     }
@@ -1786,6 +1790,7 @@ async function sessionHistory(cmd) {
             model: modelIdOf(info),
             agent: String(info.agent || ''),
             tokens: (tk.input || 0) + (tk.output || 0) + (tk.reasoning || 0),
+            tokens_cache: (tk.cache && ((tk.cache.read || 0) + (tk.cache.write || 0))) || 0,
             cost: typeof info.cost === 'number' ? info.cost : 0,
             messages: normalizeExport(data),
         };
@@ -2527,16 +2532,19 @@ const PROC_LOG_CHUNK = 32 * 1024; // máx. caracteres por respuesta de proc_log
 function procConfig() {
     const p = (config && config.processes) || {};
     const norm = (a) => String(a).toLowerCase().replace(/\.(exe|cmd|bat|com)$/, '');
-    const DEFAULT_ALLOW = ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'];
-    const LEGACY_ALLOW = ['npm', 'node', 'npx'];
+    const DEFAULT_ALLOW = ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn', 'bun', 'bunx'];
+    // Defaults viejos, en orden de aparicion (npm/node/npx -> +php/python/
+    // composer -> +pnpm/yarn). No deben bloquear los runtimes nuevos despues de
+    // `openbridge update`: solo se reemplaza cuando el allow es EXACTAMENTE uno
+    // de estos defaults viejos (los allow personalizados se respetan tal cual).
+    const LEGACY_ALLOWS = [
+        ['npm', 'node', 'npx'],
+        ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer'],
+        ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'],
+    ];
     let allow = Array.isArray(p.allow) ? p.allow.map(norm) : DEFAULT_ALLOW.slice();
-    // Las configs viejas traian el allow por defecto de antes. No debe bloquear
-    // los runtimes nuevos (php/python/composer) despues de `openbridge update`:
-    // solo se reemplaza cuando es EXACTAMENTE ese default viejo (los allow
-    // personalizados se respetan tal cual).
-    if (allow.length === LEGACY_ALLOW.length && LEGACY_ALLOW.every((x) => allow.indexOf(x) >= 0)) {
-        allow = DEFAULT_ALLOW.slice();
-    }
+    const isLegacy = (set) => allow.length === set.length && set.every((x) => allow.indexOf(x) >= 0);
+    if (LEGACY_ALLOWS.some(isLegacy)) allow = DEFAULT_ALLOW.slice();
     // processes.bins: { php: "C:\\xampp\\php\\php.exe" } para runtimes que no
     // estan en el PATH (Windows). La clave es el nombre que se escribe en el
     // comando; el valor, la ruta al ejecutable.
@@ -2891,14 +2899,27 @@ async function procDetect(cmd) {
     };
     const has = (rel) => { try { return fs.existsSync(path.join(folder, rel)); } catch (e) { return false; } };
 
-    // Node: scripts de package.json (dev/start/serve/preview).
+    // Node: scripts de package.json (dev/start/serve/preview) con el gestor de
+    // paquetes que use el proyecto, no siempre npm.
     const pkg = readJson('package.json');
     if (pkg) {
         out.kind = 'node';
+        // Gestor: el campo `packageManager` manda (pnpm/yarn/bun/npm, con o sin
+        // version); si no, el lockfile; si no, npm.
+        const KNOWN_PM = ['npm', 'pnpm', 'yarn', 'bun'];
+        const pmName = (() => {
+            const field = typeof pkg.packageManager === 'string' ? pkg.packageManager : '';
+            const name = field.split('@')[0].trim().toLowerCase();
+            if (KNOWN_PM.indexOf(name) >= 0) return name;
+            if (has('pnpm-lock.yaml')) return 'pnpm';
+            if (has('yarn.lock')) return 'yarn';
+            if (has('bun.lockb') || has('bun.lock')) return 'bun';
+            return 'npm';
+        })();
+        const run = (key) => (key === 'start' ? pmName + ' start' : pmName + ' run ' + key);
         const scripts = (pkg && pkg.scripts) || {};
         for (const key of ['dev', 'start', 'serve', 'preview']) {
-            if (scripts[key]) add((key === 'start' ? 'npm start' : 'npm run ' + key) + '  (package.json)',
-                key === 'start' ? 'npm start' : 'npm run ' + key);
+            if (scripts[key]) add(run(key) + '  (package.json)', run(key));
         }
         if (!out.suggestions.length) {
             const entry = pkg.main || (has('server.js') ? 'server.js' : (has('index.js') ? 'index.js' : ''));

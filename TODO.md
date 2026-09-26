@@ -25,7 +25,7 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   `openbridge tunnel` y `init --domain`.
 - QR propio (`src/qr.js`, sin dependencias): en `init`/`status`/`server` y `openbridge qr`.
 - `bridge.js` parametrizado para la casa portable, con overrides por entorno.
-- Tests (`node --test`): **62/62** (smoke, auth/roles, API + SSE, QR, release, bridge
+- Tests (`node --test`): **63/63** (smoke, auth/roles, API + SSE, QR, release, bridge
   end-to-end con opencode mockeado, CLI, store/import, `safeJoinWorkspace`,
   migración, hub PHP end-to-end con `php -S`). CI Windows/Linux/macOS.
 - Release privado (`scripts/release.mjs`): guard de dueño, semver/prerelease y dist-tags.
@@ -38,6 +38,12 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
   historial a opencode on demand (`session_history`). Modelos: favoritos y
   predeterminado por puente desde el hub (`models_update`). Sin autor por
   mensaje (etiquetas fijas usuario/agente).
+- Web: **pestañas de sesiones abiertas** (persistidas en `localStorage`,
+  cambia/cierra, punto de estado) y **markdown ampliado** (tablas con
+  alineacion, autolinks, imagenes, listas anidadas y `- [ ]`, h5/h6, mejor
+  espaciado). Las tool cards muestran el **diff** de las ediciones + ruta y
+  duracion; cada turno su **duracion**; el medidor de contexto incluye tokens de
+  **cache** en el detalle.
 - `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `AGENTS.md`, README, LICENSE, `.gitignore`.
 - Hub en blanco por defecto: los proyectos se **conectan a mano** (vista
   `proyectos`); el puente solo publica el indice de las carpetas `active`,
@@ -84,11 +90,15 @@ Formato: `- [ ]` pendiente · `- [x]` hecho.
 - [x] **Deteccion de dev run** por proyecto (`proc_detect` en el puente): mira
       `package.json` (scripts dev/start/serve/preview), `composer.json`/`artisan` y
       entrypoints PHP (`public/index.php`, `backend/public/index.php`, `index.php`),
-      y devuelve chips de comandos en **procs**. Recuerda el ultimo comando por carpeta.
+      y devuelve chips de comandos en **procs**. El gestor Node se detecta por el
+      campo `packageManager` y, si no, por el lockfile (`pnpm-lock.yaml`,
+      `yarn.lock`, `bun.lockb`/`bun.lock`; default `npm`). Recuerda el ultimo
+      comando por carpeta.
 - [x] `processes.bins` en `bridge/config.json` (mapa nombre -> ruta, p. ej. `php` fuera
-      del PATH) y `allow` con `php`/`python`/`composer` por defecto.
-- [x] `processes.allow` con el default viejo (`npm`/`node`/`npx`) se actualiza solo
-      al actualizar OpenBridge; los `allow` personalizados se respetan.
+      del PATH) y `allow` con `php`/`python`/`composer` y `pnpm`/`yarn`/`bun` por defecto.
+- [x] `processes.allow` con un default viejo (`npm`/`node`/`npx`, o el que sumo
+      `php`/`python`/`composer`, o el que sumo `pnpm`/`yarn`) se actualiza solo al
+      actualizar OpenBridge; los `allow` personalizados se respetan.
 - [ ] Llevar el panel al movil (hoy es solo escritorio; se usan las vistas full `archivos`/`preview`).
 
 

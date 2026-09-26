@@ -40,7 +40,9 @@ var els = {
     hSub: document.getElementById('hSub'),
     home: document.getElementById('home'),
     chat: document.getElementById('chat'),
-    messages: document.getElementById('messages'),
+    sessionTabs: document.getElementById('sessionTabs'),
+    messagesHost: document.getElementById('messagesHost'),
+    messages: null,   // panel de la pestaña activa (ver panes en "Pestañas")
     sendForm: document.getElementById('sendForm'),
     input: document.getElementById('input'),
     sendBtn: document.getElementById('sendBtn'),
@@ -160,6 +162,7 @@ var state = {
     view: 'home',
     currentId: null,
     currentSession: null,
+    openTabs: [],       // ids de sesiones abiertas como pestañas (persistido)
     catalog: null,
     catVer: '',
     bridges: [],          // resumen de puentes registrados [{id,name,online,busy_session}]
@@ -216,6 +219,12 @@ var state = {
 
 // Puente activo y lista conocida se restauran antes de pintar (caché local).
 state.activeBridge = loadStoredBridge();
+// Pestañas abiertas de la última visita (si la sesión ya no existe, se poda al
+// renderizar con la primera lista de sesiones).
+(function () {
+    var t = lsGet('ob_openTabs');
+    state.openTabs = Array.isArray(t) ? t.filter(function (x) { return typeof x === 'number'; }) : [];
+})();
 var _cachedBridges = lsGet('ob_bridges');
 if (Array.isArray(_cachedBridges) && _cachedBridges.length) state.bridges = _cachedBridges;
 
@@ -661,6 +670,16 @@ function timeOnly(iso) {
     } catch (e) { return ''; }
 }
 
+// Duracion abreviada de un turno/tool (ms -> "820 ms", "3,4 s", "1m 20s").
+function fmtDuration(ms) {
+    ms = Number(ms) || 0;
+    if (ms <= 0) return '';
+    if (ms < 1000) return ms + ' ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1).replace('.', ',') + ' s';
+    var s = Math.round(ms / 1000);
+    return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
+
 function dayKey(iso) {
     var d = new Date(iso);
     if (!isFinite(d.getTime())) return '';
@@ -888,8 +907,11 @@ function sessionTokensLabel(s) {
 function sessionTokensTitle(s) {
     var tok = Math.round(Number(s.tokens) || 0);
     var ctx = modelContext(s.model);
+    var cache = Math.round(Number(s.tokens_cache) || 0);
     var cost = fmtCost(s.cost);
-    return tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '') + (cost ? ' · ' + cost + ' acumulado' : '');
+    return tok + ' tokens' + (ctx ? ' de ' + ctx + ' de contexto' : '')
+        + (cache ? ' · ' + fmtTokens(cache) + ' de cache' : '')
+        + (cost ? ' · ' + cost + ' acumulado' : '');
 }
 
 // Porcentaje de contexto consumido ('' si no hay datos).
@@ -1711,6 +1733,7 @@ function renderHome(sessions) {
     }
 
     renderSidebar();
+    renderTabs();
     state.subtitle = list.length === 1 ? '1 chat' : list.length + ' chats';
     if (state.view === 'home') els.hSub.textContent = state.subtitle;
     updateStatusbar();
@@ -1731,7 +1754,10 @@ async function loadSessions() {
 // Render de contenido: markdown ligero (negritas, cursiva, tachado, código,
 // listas, encabezados, citas, separadores, enlaces) + fences de código.
 // ---------------------------------------------------------------------------
-// Inline: code spans primero; luego bold/italic/strike/enlaces sobre lo demás.
+// Inline: code spans primero; luego links/imagenes/autolinks (se apartan con un
+// marcador para no ensuciar el href al escapar); recien despues bold/italic/
+// strike sobre el texto ya escapado.
+var MD_TOK = '\uE000';
 function mdInline(raw) {
     var out = '';
     var parts = String(raw).split(/`([^`\n]+)`/g); // impares = código
@@ -1740,65 +1766,165 @@ function mdInline(raw) {
             out += '<code class="inl">' + esc(parts[i]) + '</code>';
             continue;
         }
-        var s = esc(parts[i]);
-        s = s.replace(/\*\*([^*\n][^*\n]*?)\*\*/g, '<strong>$1</strong>');
-        s = s.replace(/(^|[\s(>.,;:!?¡¿"“])\*([^*\s][^*\n]*?)\*(?=$|[\s).,;:!?<>"”])/g, '$1<em>$2</em>');
-        s = s.replace(/(^|[\s(>.,;:!?¡¿"“])_([^_\s][^_\n]*?)_(?=$|[\s).,;:!?<>"”])/g, '$1<em>$2</em>');
-        s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
-        s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)<>"']+)\)/g, function (m, t, u) {
-            return '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + t + '</a>';
-        });
-        out += s;
+        out += mdInlineText(parts[i]);
     }
     return out;
 }
 
-// Bloques: encabezados, separadores, citas, listas y párrafos (línea = <br>,
-// para respetar el corte de línea del output del CLI).
+function mdInlineText(s) {
+    var tokens = [];
+    function stash(html) {
+        tokens.push(html);
+        return MD_TOK + (tokens.length - 1) + MD_TOK;
+    }
+    // Imagenes: ![alt](url)
+    s = s.replace(/!\[([^\]\n]*)\]\((https?:\/\/[^\s)<>"']+)\)/g, function (m, alt, u) {
+        return stash('<img class="md-img" src="' + esc(u) + '" alt="' + esc(alt) + '" loading="lazy">');
+    });
+    // Enlaces markdown: [texto](url)
+    s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)<>"']+)\)/g, function (m, t, u) {
+        return stash('<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(t) + '</a>');
+    });
+    // URLs desnudas (autolink), recortando puntuacion final.
+    s = s.replace(/(^|[\s(>])(https?:\/\/[^\s<>"']+)/g, function (m, pre, u) {
+        var tail = '';
+        var punc = u.match(/[.,;:!?]+$/);
+        if (punc) { tail = punc[0] + tail; u = u.slice(0, -punc[0].length); }
+        var par = u.match(/\)+$/);
+        if (par && u.indexOf('(') < 0) { tail = par[0] + tail; u = u.slice(0, -par[0].length); }
+        if (!u) return m;
+        return pre + stash('<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(u) + '</a>') + tail;
+    });
+    s = esc(s);
+    s = s.replace(/\*\*([^*\n][^*\n]*?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[\s(>.,;:!?¡¿"“])\*([^*\s][^*\n]*?)\*(?=$|[\s).,;:!?<>"”])/g, '$1<em>$2</em>');
+    s = s.replace(/(^|[\s(>.,;:!?¡¿"“])_([^_\s][^_\n]*?)_(?=$|[\s).,;:!?<>"”])/g, '$1<em>$2</em>');
+    s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+    return s.replace(new RegExp(MD_TOK + '(\\d+)' + MD_TOK, 'g'), function (m, n) {
+        return tokens[+n] || '';
+    });
+}
+
+// Bloques: encabezados, separadores, citas, tablas, listas (con anidado y
+// continuacion) y parrafos (línea = <br>, para respetar el corte del CLI).
 function mdBlocks(raw) {
     var lines = String(raw).replace(/\r\n?/g, '\n').split('\n');
     var html = '';
     var para = [];
-    var list = null;
+    var quote = [];
+    var stack = []; // listas abiertas: { type, indent, li }
     function flushPara() {
         if (!para.length) return;
         html += '<div class="md-p">' + para.map(mdInline).join('<br>') + '</div>';
         para = [];
     }
-    function flushList() {
-        if (!list) return;
-        html += '</' + list + '>';
-        list = null;
+    function flushQuote() {
+        if (!quote.length) return;
+        html += '<div class="md-quote">' + quote.map(mdInline).join('<br>') + '</div>';
+        quote = [];
+    }
+    function closeLists(toIndent) {
+        while (stack.length && stack[stack.length - 1].indent > toIndent) {
+            var lv = stack.pop();
+            if (lv.li) html += '</li>';
+            html += '</' + lv.type + '>';
+        }
+    }
+    function closeAll() { closeLists(-1); }
+    function openItem(type, indent, content) {
+        flushPara(); flushQuote();
+        closeLists(indent);
+        var tag = type + ' class="md-' + type + '"';
+        var top = stack[stack.length - 1];
+        if (!top || top.indent < indent) {
+            html += '<' + tag + '>';
+            stack.push({ type: type, indent: indent, li: false });
+        } else if (top.indent === indent && top.type !== type) {
+            if (top.li) html += '</li>';
+            html += '</' + top.type + '>';
+            stack.pop();
+            html += '<' + tag + '>';
+            stack.push({ type: type, indent: indent, li: false });
+        } else if (top.li) {
+            html += '</li>';
+        }
+        var cur = stack[stack.length - 1];
+        var task = content.match(/^\[( |x|X)\]\s+(.*)$/);
+        var inner = task
+            ? '<span class="md-task">' + (task[1] === ' ' ? '☐' : '☑') + '</span> ' + mdInline(task[2])
+            : mdInline(content);
+        html += '<li>' + inner;
+        cur.li = true;
+    }
+    function indentOf(line) {
+        var m = line.match(/^[ \t]*/)[0];
+        return m.replace(/\t/g, '    ').length;
     }
     for (var i = 0; i < lines.length; i++) {
         var line = lines[i];
         var t = line.trim();
-        if (t === '') { flushPara(); flushList(); continue; }
-        var h = t.match(/^(#{1,4})\s+(.*)$/);
-        if (h) { flushPara(); flushList(); html += '<div class="md-h md-h' + h[1].length + '">' + mdInline(h[2]) + '</div>'; continue; }
-        if (/^([-*_])\1{2,}$/.test(t)) { flushPara(); flushList(); html += '<hr class="md-hr">'; continue; }
+        if (t === '') { flushPara(); flushQuote(); closeAll(); continue; }
+        var h = t.match(/^(#{1,6})\s+(.*)$/);
+        if (h) { flushPara(); flushQuote(); closeAll(); html += '<div class="md-h md-h' + h[1].length + '">' + mdInline(h[2]) + '</div>'; continue; }
+        if (/^([-*_])\1{2,}$/.test(t)) { flushPara(); flushQuote(); closeAll(); html += '<hr class="md-hr">'; continue; }
         var q = line.match(/^\s*>\s?(.*)$/);
-        if (q) { flushPara(); flushList(); html += '<div class="md-quote">' + mdInline(q[1]) + '</div>'; continue; }
-        var ul = line.match(/^\s*[-*+]\s+(.*)$/);
-        if (ul) {
-            flushPara();
-            if (list !== 'ul') { flushList(); html += '<ul class="md-ul">'; list = 'ul'; }
-            html += '<li>' + mdInline(ul[1]) + '</li>';
+        if (q) { flushPara(); closeAll(); quote.push(q[1]); continue; }
+        var tbl = (t.indexOf('|') >= 0) ? mdTable(lines, i) : null;
+        if (tbl) { flushPara(); flushQuote(); closeAll(); html += tbl.html; i = tbl.next - 1; continue; }
+        var ul = line.match(/^[ \t]*[-*+]\s+(.*)$/);
+        var ol = ul ? null : line.match(/^[ \t]*\d+[.)]\s+(.*)$/);
+        if (ul) { openItem('ul', indentOf(line), ul[1]); continue; }
+        if (ol) { openItem('ol', indentOf(line), ol[1]); continue; }
+        // Continuacion (lazy) de un item de lista: linea indentada o no.
+        if (stack.length && indentOf(line) >= stack[stack.length - 1].indent) {
+            html += '<br>' + mdInline(t);
             continue;
         }
-        var ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
-        if (ol) {
-            flushPara();
-            if (list !== 'ol') { flushList(); html += '<ol class="md-ol">'; list = 'ol'; }
-            html += '<li>' + mdInline(ol[1]) + '</li>';
-            continue;
-        }
-        flushList();
+        flushQuote();
+        closeAll();
         para.push(line);
     }
     flushPara();
-    flushList();
+    flushQuote();
+    closeAll();
     return html;
+}
+
+// Tabla GFM: encabezado con "|" + separadora de guiones (con alineacion :---:).
+function mdTableSplit(row) {
+    var r = row.trim();
+    if (r.charAt(0) === '|') r = r.slice(1);
+    if (r.charAt(r.length - 1) === '|') r = r.slice(0, -1);
+    return r.split('|').map(function (c) { return c.trim(); });
+}
+function mdAlign(a) { return a ? ' class="ta-' + a + '"' : ''; }
+function mdTable(lines, i) {
+    var sep = (i + 1 < lines.length) ? lines[i + 1] : '';
+    if (sep.indexOf('|') < 0 || !/^\s*\|?[\s:|-]+\|?\s*$/.test(sep) || sep.indexOf('-') < 0) return null;
+    var heads = mdTableSplit(lines[i]);
+    var seps = mdTableSplit(sep);
+    if (!heads.length || seps.length < heads.length) return null;
+    var aligns = seps.map(function (c) {
+        var l = c.charAt(0) === ':';
+        var r = c.charAt(c.length - 1) === ':';
+        return (l && r) ? 'center' : (r ? 'right' : (l ? 'left' : ''));
+    });
+    var n = heads.length;
+    var body = [];
+    var j = i + 2;
+    while (j < lines.length && lines[j].trim() !== '' && lines[j].indexOf('|') >= 0) {
+        body.push(mdTableSplit(lines[j]));
+        j++;
+    }
+    var out = '<div class="md-tablewrap"><table class="md-table"><thead><tr>';
+    for (var c = 0; c < n; c++) out += '<th' + mdAlign(aligns[c]) + '>' + mdInline(heads[c] || '') + '</th>';
+    out += '</tr></thead><tbody>';
+    for (var r = 0; r < body.length; r++) {
+        out += '<tr>';
+        for (var c2 = 0; c2 < n; c2++) out += '<td' + mdAlign(aligns[c2]) + '>' + mdInline(body[r][c2] || '') + '</td>';
+        out += '</tr>';
+    }
+    return { html: out + '</tbody></table></div>', next: j };
 }
 
 // Resalta la búsqueda sobre nodos de texto (DOM), sin tocar las etiquetas.
@@ -2024,8 +2150,9 @@ function reasoningHtml(m, chatQuery) {
         + '<div class="rbody">' + renderContent(m.reasoning, chatQuery) + '</div></details>';
 }
 
-function nearBottom() {
-    var el = els.messages;
+function nearBottom(el) {
+    el = el || els.messages;
+    if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 140;
 }
 
@@ -2057,8 +2184,10 @@ function msgSig(m) {
                 // Estado, titulo y salida: una tool puede seguir 'running' con
                 // salida nueva (bash largo) y la tarjeta debe refrescarse.
                 var st = p.state || {};
+                var md = st.metadata || {};
+                var diffLen = (typeof md.diff === 'string') ? md.diff.length : ((typeof md.patch === 'string') ? md.patch.length : 0);
                 psig += (st.status || '') + ':' + (st.title || '').length + ':'
-                    + (st.output != null ? String(st.output).length : 0) + ',';
+                    + (st.output != null ? String(st.output).length : 0) + ':' + diffLen + ',';
             } else {
                 psig += (p.text || '').length + ',';
             }
@@ -2068,21 +2197,40 @@ function msgSig(m) {
         + '|' + psig + '|' + (m.canceled ? 1 : 0) + '|' + (m.agent || '') + '|' + (m.img ? m.img.length : 0);
 }
 
+// Duracion de una tool (state.time.start/end), '' si opencode no la expone.
+function toolDuration(st) {
+    var t = st.time || {};
+    var a = Number(t.start) || 0;
+    var b = Number(t.end) || 0;
+    return (a && b && b >= a) ? fmtDuration(b - a) : '';
+}
+
 function toolCardHtml(p, chatQuery) {
     var st = p.state || {};
     var status = String(st.status || '');
     var title = String(st.title || '');
+    var md = st.metadata || {};
     var input = st.input ? JSON.stringify(st.input, null, 1) : '';
+    var file = String(md.filepath || (st.input && st.input.filePath) || '');
+    // Diff unificado de edit/write (opencode lo deja en metadata.diff/patch).
+    var diff = (typeof md.diff === 'string' && md.diff) ? md.diff
+        : ((typeof md.patch === 'string' && md.patch) ? md.patch : '');
     var out = st.output != null ? String(st.output)
-        : (st.metadata && st.metadata.output != null ? String(st.metadata.output) : '');
+        : (md.output != null ? String(md.output) : '');
+    if (diff && out === diff) out = '';
+    var dur = toolDuration(st);
     var cls = 'toolcard' + (status === 'running' ? ' running' : (status === 'error' ? ' error' : ''));
     return '<div class="' + cls + '" data-tool="' + esc(p.tool || '') + '">'
         + '<div class="toolhead"><span class="toolspin"></span>'
         + '<span class="toolname">' + esc(p.tool || 'tool') + '</span>'
-        + '<span class="tooltitle">' + esc(title) + '</span></div>'
+        + '<span class="tooltitle">' + esc(title || file) + '</span>'
+        + (dur ? '<span class="tooltime">' + esc(dur) + '</span>' : '')
+        + '</div>'
         + '<div class="toolbody">'
+        + (file && file !== title ? '<div class="toolfile">' + esc(file) + '</div>' : '')
         + (input ? '<pre class="toolinput">' + esc(input) + '</pre>' : '')
-        + (out ? '<pre class="tooloutput">' + esc(out.slice(0, 8000)) + '</pre>' : '')
+        + (diff ? renderDiff(diff)
+            : (out ? '<pre class="tooloutput">' + esc(out.slice(0, 8000)) + '</pre>' : ''))
         + '</div></div>';
 }
 
@@ -2120,7 +2268,8 @@ function msgNodeHtml(m, chatQuery) {
     return '<div class="msg ' + cls + (hit ? ' hit' : '') + '" data-mid="' + (m.id || '') + '" data-sig="' + esc(msgSig(m)) + '">'
         + '<div class="role"><span class="who">' + who + '</span>' + agentBadge + stopBadge
         + (streaming ? '<span class="genbadge">generando…</span>' : '')
-        + '<span class="rmeta" title="' + esc(timeStr(m.ts)) + '">' + esc(timeOnly(m.ts)) + '</span>'
+        + '<span class="rmeta" title="' + esc(timeStr(m.ts) + (m.dur ? ' · ' + fmtDuration(m.dur) : '')) + '">'
+        + esc(timeOnly(m.ts) + (m.dur ? ' · ' + fmtDuration(m.dur) : '')) + '</span>'
         + '<button type="button" class="copybtn" data-copy="msg" title="Copiar mensaje">⧉</button></div>'
         + '<div class="body">' + body
         + (streaming ? '<span class="stream-cursor">▊</span>' : '')
@@ -2132,34 +2281,70 @@ function daySepHtml(iso) {
     return '<div class="daysep"><span>' + esc(dayLabel(iso)) + '</span></div>';
 }
 
-// Agrega al DOM solo los mensajes nuevos y reemplaza los que cambiaron.
+// Reconcilia el DOM: quita los mensajes que ya no estan (cola consumida,
+// borrador de un turno viejo), actualiza los que cambiaron y los deja en el
+// orden de `msgs`. El borrador en vivo ('inflight') siempre va al final.
 // Devuelve la cantidad de nodos agregados.
-function syncMessages(msgs, chatQuery) {
+function syncMessages(msgs, chatQuery, cont) {
     var added = 0;
-    var cont = els.messages;
-    for (var i = 0; i < msgs.length; i++) {
-        var m = msgs[i];
-        var existing = cont.querySelector('.msg[data-mid="' + m.id + '"]');
-        if (existing) {
+    cont = cont || els.messages;
+    var i, m, node;
+    var wanted = {};
+    for (i = 0; i < msgs.length; i++) wanted[String(msgs[i].id)] = true;
+
+    // Nodos obsoletos: sin este paso el borrador 'inflight' se reutilizaba en
+    // su posicion vieja y la respuesta nueva salia mas arriba.
+    var olds = cont.querySelectorAll('.msg');
+    for (i = 0; i < olds.length; i++) {
+        if (!wanted[olds[i].getAttribute('data-mid')]) olds[i].parentNode.removeChild(olds[i]);
+    }
+    var empty = cont.querySelector('.empty');
+    if (empty && msgs.length) empty.parentNode.removeChild(empty);
+
+    // Inserta/actualiza cada mensaje en su posicion.
+    var ref = null;
+    for (i = 0; i < msgs.length; i++) {
+        m = msgs[i];
+        node = cont.querySelector('.msg[data-mid="' + m.id + '"]');
+        if (node) {
             var sig = String(msgSig(m));
-            if (existing.getAttribute('data-sig') !== sig) {
+            if (node.getAttribute('data-sig') !== sig) {
                 var repl = document.createElement('div');
                 repl.innerHTML = msgNodeHtml(m, chatQuery);
-                existing.parentNode.replaceChild(repl.firstChild, existing);
+                var fresh = repl.firstChild;   // replaceChild lo mueve: capturar antes
+                cont.replaceChild(fresh, node);
+                node = fresh;
             }
-            continue;
+        } else {
+            var wrap = document.createElement('div');
+            wrap.innerHTML = msgNodeHtml(m, chatQuery);
+            node = wrap.firstChild;
+            added++;
         }
+        var after = ref ? ref.nextSibling : cont.firstChild;
+        if (node !== after) cont.insertBefore(node, after);
+        ref = node;
+    }
+
+    // El borrador en streaming va siempre al final (aunque lo hayamos reusado).
+    var infl = cont.querySelector('.msg[data-mid="inflight"]');
+    if (infl && infl !== cont.lastElementChild) cont.appendChild(infl);
+
+    // Separadores de dia: se reconstruyen en el orden actual.
+    var seps = cont.querySelectorAll('.daysep');
+    for (i = 0; i < seps.length; i++) seps[i].parentNode.removeChild(seps[i]);
+    var prevDay = '';
+    for (i = 0; i < msgs.length; i++) {
+        m = msgs[i];
         var k = dayKey(m.ts);
-        if (k !== state.lastDay) {
+        if (k === prevDay) continue;
+        prevDay = k;
+        node = cont.querySelector('.msg[data-mid="' + m.id + '"]');
+        if (node) {
             var sep = document.createElement('div');
             sep.innerHTML = daySepHtml(m.ts);
-            cont.appendChild(sep.firstChild);
+            cont.insertBefore(sep.firstChild, node);
         }
-        state.lastDay = k;
-        var wrap = document.createElement('div');
-        wrap.innerHTML = msgNodeHtml(m, chatQuery);
-        cont.appendChild(wrap.firstChild);
-        added++;
     }
     return added;
 }
@@ -2222,11 +2407,20 @@ function updateSyncBtn() {
     els.btnSync.style.display = (s && s.opencode_session) ? '' : 'none';
 }
 
-function renderChat(session, messages) {
+// `sid` es la sesion dueña del render (puede no ser la pestaña activa si el
+// historial llego despues de cambiar de pestaña): cada render va a SU panel.
+function renderChat(session, messages, sid) {
+    if (sid == null) sid = state.currentId;
+    // Si la pestaña se cerró mientras el historial viajaba, no crear un panel
+    // huérfano (que quedaría visible encima del activo).
+    if (!panes[sid] && sid !== state.currentId && state.openTabs.indexOf(sid) < 0) return;
+    var isActive = (sid === state.currentId);
+    var pane = paneFor(sid);
+
     // Un chat abierto desde otra vista (búsqueda global, link directo) puede
     // pertenecer a otra PC: se pasa al puente dueño para ver su catálogo.
     var owner = session ? (session.bridge || '') : '';
-    if (owner && owner !== activeBridgeId() && bridgeList().length > 1) {
+    if (isActive && owner && owner !== activeBridgeId() && bridgeList().length > 1) {
         state.activeBridge = owner;
         storeBridge(owner);
         state.catalog = null;
@@ -2234,20 +2428,28 @@ function renderChat(session, messages) {
         renderBridgeBar();
         refreshBridgeData();
     }
-    state.messages = messages || [];
-    if (session) {
-        state.currentSession = session;
-        if (session.folder) state.lastFolder = session.folder;
-        els.hTitle.textContent = session.name || 'chat';
-        els.hSub.textContent = sessionSubtitle(session);
+
+    var msgs = messages || [];
+    pane.messages = msgs;
+    if (session) pane.session = session;
+    if (isActive) {
+        state.messages = msgs;
+        if (session) {
+            state.currentSession = session;
+            if (session.folder) state.lastFolder = session.folder;
+            els.hTitle.textContent = session.name || 'chat';
+            els.hSub.textContent = sessionSubtitle(session);
+        }
+        updateSyncBtn();
     }
-    updateSyncBtn();
-    var msgs = state.messages;
-    var chatQuery = (state.chatSearch && state.chatSearch.query) || '';
-    // Render completo solo al cambiar de chat o al buscar; el resto es incremental.
-    var full = !!chatQuery || state.renderSid !== state.currentId;
-    state.renderSid = state.currentId;
-    var autoScroll = nearBottom();
+
+    var chatQuery = isActive ? ((state.chatSearch && state.chatSearch.query) || '') : '';
+    // Render completo al estrenar el panel o al buscar; el resto es incremental
+    // (así, al volver a una pestaña ya vista, se conserva el contenido y el scroll).
+    var full = !!chatQuery || pane.renderedSid !== sid;
+    pane.renderedSid = sid;
+    var cont = pane.el;
+    var autoScroll = nearBottom(cont);
     var addedCount = 0;
 
     if (full) {
@@ -2258,33 +2460,37 @@ function renderChat(session, messages) {
             if (k !== prevDay) { html += daySepHtml(msgs[i].ts); prevDay = k; }
             html += msgNodeHtml(msgs[i], chatQuery);
         }
-        els.messages.innerHTML = html || '<div class="empty">Sin mensajes. Escribí algo.</div>';
-        state.lastDay = prevDay;
+        cont.innerHTML = html || '<div class="empty">Sin mensajes. Escribí algo.</div>';
+        pane.lastDay = prevDay;
     } else {
-        addedCount = syncMessages(msgs, chatQuery);
+        addedCount = syncMessages(msgs, chatQuery, cont);
     }
-    updateProcRow(msgs);
+    if (isActive) updateProcRow(msgs);
 
     if (full) {
-        els.messages.scrollTop = els.messages.scrollHeight;
-        if (els.jumpBtn) els.jumpBtn.classList.remove('show');
-        if (chatQuery && state.chatSearch.firstHit) {
-            var first = els.messages.querySelector('.msg.hit');
+        cont.scrollTop = cont.scrollHeight;
+        if (isActive && els.jumpBtn) els.jumpBtn.classList.remove('show');
+        if (isActive && chatQuery && state.chatSearch.firstHit) {
+            var first = cont.querySelector('.msg.hit');
             if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
         }
     } else if (autoScroll) {
-        els.messages.scrollTop = els.messages.scrollHeight;
-    } else if (addedCount > 0 && els.jumpBtn) {
+        cont.scrollTop = cont.scrollHeight;
+    } else if (isActive && addedCount > 0 && els.jumpBtn) {
         els.jumpBtn.classList.add('show');
         els.jumpBtn.style.bottom = jumpBarH() + 'px';
     }
     renderSidebar();
-    updateStatusbar();
-    rpRefresh();
+    renderTabs();
+    if (isActive) {
+        updateStatusbar();
+        rpRefresh();
+    }
 }
 
-// Copiar mensajes y bloques de código (delegado, sobrevive a los re-renders).
-els.messages.addEventListener('click', function (e) {
+// Copiar mensajes y bloques de código. Se engancha por panel (uno por pestaña),
+// así el handler sobrevive a los re-renders sin perder el estado del panel.
+function onMessagesClick(e) {
     var head = e.target.closest('.toolcard .toolhead');
     if (head) {
         var card = head.parentNode;
@@ -2302,15 +2508,16 @@ els.messages.addEventListener('click', function (e) {
     }
     var msgEl = btn.closest('.msg');
     if (!msgEl) return;
-    var mid = parseInt(msgEl.getAttribute('data-mid'), 10);
-    for (var i = 0; i < state.messages.length; i++) {
-        if (state.messages[i].id === mid) {
-            var extra = state.messages[i].img ? '\n[imagen adjunta]' : '';
-            copyText((state.messages[i].text || '') + extra, 'mensaje copiado');
+    var mid = msgEl.getAttribute('data-mid');
+    var list = state.messages || [];
+    for (var i = 0; i < list.length; i++) {
+        if (String(list[i].id) === mid) {
+            var extra = list[i].img ? '\n[imagen adjunta]' : '';
+            copyText((list[i].text || '') + extra, 'mensaje copiado');
             return;
         }
     }
-});
+}
 
 if (els.jumpBtn) {
     els.jumpBtn.addEventListener('click', function () {
@@ -2363,7 +2570,7 @@ async function loadHistory(sid, incremental) {
                 var parts = Array.isArray(m.parts) ? m.parts : [];
                 var txt = parts.filter(function (p) { return p.type === 'text'; })
                     .map(function (p) { return p.text || ''; }).join('\n\n');
-                return { id: k + 1, role: m.role, ts: m.ts, oc_msg: m.oc_msg, agent: m.agent, parts: parts, text: txt, status: 'done' };
+                return { id: m.oc_msg || ('h' + (k + 1)), role: m.role, ts: m.ts, oc_msg: m.oc_msg, agent: m.agent, dur: m.dur || 0, parts: parts, text: txt, status: 'done' };
             });
             cache = {
                 wasLive: live,
@@ -2374,6 +2581,7 @@ async function loadHistory(sid, incremental) {
                     model: hist.model || '',
                     agent: hist.agent || '',
                     tokens: hist.tokens || 0,
+                    tokensCache: hist.tokens_cache || 0,
                     cost: (typeof hist.cost === 'number' && hist.cost > 0) ? hist.cost : 0,
                 },
             };
@@ -2391,6 +2599,7 @@ async function loadHistory(sid, incremental) {
             model: cache.overlay.model || sess.model,
             agent: cache.overlay.agent || sess.agent,
             tokens: cache.overlay.tokens || sess.tokens,
+            tokens_cache: cache.overlay.tokensCache || sess.tokens_cache,
             cost: cache.overlay.cost || sess.cost,
         });
     }
@@ -2408,16 +2617,173 @@ async function loadHistory(sid, incremental) {
             text: inflight.text || '', reasoning: inflight.reasoning || '',
         });
     }
-    renderChat(sess, msgs);
+    renderChat(sess, msgs, sid);
+}
+
+// ---------------------------------------------------------------------------
+// Pestañas de sesiones abiertas (se recuerdan en localStorage). Cada pestaña
+// tiene su PROPIO panel de mensajes, que vive en memoria hasta cerrarla: al
+// saltar entre pestañas no se re-renderiza ni se pierde el scroll.
+// ---------------------------------------------------------------------------
+var panes = {};   // sid -> { el, messages, session, renderedSid, lastDay, scrollTop }
+
+function createPane(sid) {
+    var el = document.createElement('div');
+    el.className = 'messages';
+    el.setAttribute('data-pane', sid);
+    el.setAttribute('aria-live', 'polite');
+    el.addEventListener('click', onMessagesClick);
+    el.addEventListener('scroll', onMsgScroll, { passive: true });
+    if (els.messagesHost) els.messagesHost.appendChild(el);
+    var pane = { el: el, messages: null, session: null, renderedSid: null, lastDay: '', scrollTop: 0 };
+    panes[sid] = pane;
+    return pane;
+}
+function paneFor(sid) { return panes[sid] || createPane(sid); }
+
+// Encabezado según la sesión del panel activo (al volver a una pestaña ya vista).
+function applyPaneHeader() {
+    var s = state.currentSession;
+    if (s) {
+        els.hTitle.textContent = s.name || 'chat';
+        els.hSub.textContent = sessionSubtitle(s);
+    }
+    updateSyncBtn();
+}
+
+// Muestra el panel de `sid` y oculta el anterior guardando su scroll.
+function showPane(sid) {
+    if (els.messages) {
+        var cur = panes[els.messages.getAttribute('data-pane')];
+        if (cur) cur.scrollTop = els.messages.scrollTop;
+        els.messages.style.display = 'none';
+    }
+    var pane = paneFor(sid);
+    pane.el.style.display = '';
+    els.messages = pane.el;
+    state.messages = pane.messages || [];
+    if (pane.session) {
+        state.currentSession = pane.session;
+        applyPaneHeader();
+    }
+    try { pane.el.scrollTop = pane.scrollTop || 0; } catch (e) {}
+    return pane;
+}
+
+function dropPane(sid) {
+    var pane = panes[sid];
+    if (!pane) return;
+    if (pane.el && pane.el.parentNode) pane.el.parentNode.removeChild(pane.el);
+    if (els.messages === pane.el) els.messages = null;
+    delete panes[sid];
+}
+
+function sessionById(id) {
+    for (var i = 0; i < state.sessions.length; i++) {
+        if (state.sessions[i].id === id) return state.sessions[i];
+    }
+    return null;
+}
+function tabTitle(id) {
+    var s = sessionById(id);
+    if (s && s.name) return s.name;
+    if (state.currentId === id && state.currentSession && state.currentSession.name) return state.currentSession.name;
+    return 'chat ' + id;
+}
+function saveOpenTabs() { lsSet('ob_openTabs', state.openTabs); }
+function addTab(id) {
+    if (typeof id !== 'number') return;
+    if (state.openTabs.indexOf(id) < 0) {
+        state.openTabs.push(id);
+        saveOpenTabs();
+    }
+}
+function forgetTab(id) {
+    var i = state.openTabs.indexOf(id);
+    if (i < 0) return;
+    state.openTabs.splice(i, 1);
+    saveOpenTabs();
+    // Al cerrar la pestaña se suelta su conversación en memoria.
+    dropPane(id);
+}
+function closeTab(id) {
+    var idx = state.openTabs.indexOf(id);
+    if (idx < 0) return;
+    forgetTab(id);
+    if (state.currentId === id) {
+        // Al cerrar la activa se pasa a la vecina (derecha y si no izquierda).
+        var next = state.openTabs[idx] != null ? state.openTabs[idx] : state.openTabs[idx - 1];
+        if (next != null) openChat(next);
+        else goHome();
+    } else {
+        renderTabs();
+    }
+}
+function renderTabs() {
+    if (!els.sessionTabs) return;
+    var ids = state.openTabs;
+    if (!ids.length) {
+        els.sessionTabs.style.display = 'none';
+        els.sessionTabs.innerHTML = '';
+        return;
+    }
+    els.sessionTabs.style.display = '';
+    var html = '';
+    for (var i = 0; i < ids.length; i++) {
+        var id = ids[i];
+        var s = sessionById(id);
+        var st = s ? s.state : '';
+        var stateCls = st === 'working' ? ' working' : (st === 'waiting' ? ' waiting' : '');
+        var stateTip = st === 'working' ? ' · trabajando ahora…' : (st === 'waiting' ? ' · esperando respuesta' : '');
+        var active = (id === state.currentId) ? ' active' : '';
+        var title = tabTitle(id);
+        html += '<div class="session-tab' + active + stateCls + '" data-tab="' + id + '" role="tab" tabindex="0" aria-selected="' + (active ? 'true' : 'false') + '" title="' + esc(title + stateTip) + '">'
+            + '<span class="tabdot"></span><span class="tabname">' + esc(title) + '</span>'
+            + '<button type="button" class="tabx" data-tabx="' + id + '" aria-label="Cerrar pestaña" title="Cerrar">✕</button>'
+            + '</div>';
+    }
+    els.sessionTabs.innerHTML = html;
+    var activeEl = els.sessionTabs.querySelector('.session-tab.active');
+    if (activeEl) {
+        try { activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
+    }
+}
+if (els.sessionTabs) {
+    els.sessionTabs.addEventListener('click', function (e) {
+        var x = e.target.closest('.tabx');
+        if (x) { e.stopPropagation(); closeTab(parseInt(x.getAttribute('data-tabx'), 10)); return; }
+        var t = e.target.closest('.session-tab');
+        if (!t) return;
+        var id = parseInt(t.getAttribute('data-tab'), 10);
+        if (id !== state.currentId) openChat(id);
+    });
+    els.sessionTabs.addEventListener('auxclick', function (e) {
+        if (e.button !== 1) return;
+        var t = e.target.closest('.session-tab');
+        if (!t) return;
+        e.preventDefault();
+        closeTab(parseInt(t.getAttribute('data-tab'), 10));
+    });
 }
 
 function openChat(id) {
-    state.currentId = id;
+    addTab(id);
     state.chatSearch = { query: '', firstHit: false };
     if (state.view !== 'chat') state.prevView = state.view;
+    state.currentId = id;
     showView('chat');
-    els.messages.innerHTML = loadingHtml();
-    loadHistory(id);
+    var pane = showPane(id);
+    renderTabs();
+    if (pane.renderedSid === id) {
+        // Ya está en memoria: se muestra al instante y se refresca en segundo
+        // plano (incremental, sin perder el scroll).
+        applyPaneHeader();
+        updateProcRow(state.messages);
+        loadHistory(id, true);
+    } else {
+        els.messages.innerHTML = loadingHtml();
+        loadHistory(id);
+    }
     try { history.replaceState(null, '', 'chat.php?session=' + id); } catch (e) {}
 }
 
@@ -2435,6 +2801,7 @@ function goHome() {
     state.chatSearch = null;
     updateSyncBtn();
     showView('home');
+    renderTabs();
     loadSessions();
     rpRefresh();
 }
@@ -3551,6 +3918,9 @@ els.cardMenu.addEventListener('click', async function (e) {
     var data = await api('api.php?action=session_delete', apiCsrf('POST', { id: sid }));
     if (data.ok) {
         toast('chat eliminado', 'ok');
+        forgetTab(sid);
+        if (state.currentId === sid) { state.currentId = null; els.messages = null; }
+        renderTabs();
         loadSessions();
     } else {
         toast(data.error || 'no se pudo eliminar', 'error');
@@ -5252,7 +5622,6 @@ function initPush() {
 
 applyTheme(state.theme, { persist: false });
 bindChatSearch();
-els.messages.addEventListener('scroll', onMsgScroll, { passive: true });
 autoGrow();
 showView('home');
 boot();

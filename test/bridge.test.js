@@ -54,7 +54,7 @@ const MOCK_OC = [
 ].join('\n');
 
 function startMockApi(workspace) {
-    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, proc: null, resolveProc: null, import: null, resolveImport: null, index: null, resolveIndex: null, seen: [], workspace };
+    const state = { sent: false, respond: null, resolveRespond: null, command: null, resolveCommand: null, proc: null, resolveProc: null, procById: {}, waitProc: {}, import: null, resolveImport: null, index: null, resolveIndex: null, seen: [], workspace };
     const responded = new Promise((resolve) => { state.resolveRespond = resolve; });
     const commanded = new Promise((resolve) => { state.resolveCommand = resolve; });
     const procced = new Promise((resolve) => { state.resolveProc = resolve; });
@@ -93,9 +93,18 @@ function startMockApi(workspace) {
                     };
                 } else if (state.syncDone && !state.moreSent) {
                     // Ya terminaron los comandos iniciales: pide "Ver mas
-                    // sesiones" (folder_more) para probar el paginado.
+                    // sesiones" (folder_more) para probar el paginado. Los otros
+                    // proc_detect (pnpm/yarn/bun) van acá para no alterar el
+                    // timing del primer index_sync (que corta a 4).
                     state.moreSent = true;
-                    json = { ok: true, known_oc: [], messages: [], commands: [{ id: 12, name: 'folder_more', args: [workspace, '4'] }] };
+                    json = {
+                        ok: true, known_oc: [], messages: [], commands: [
+                            { id: 12, name: 'folder_more', args: [workspace, '4'] },
+                            { id: 20, name: 'proc_detect', args: [path.join(workspace, 'proj-pnpm')] },
+                            { id: 21, name: 'proc_detect', args: [path.join(workspace, 'proj-yarn')] },
+                            { id: 22, name: 'proc_detect', args: [path.join(workspace, 'proj-bun')] },
+                        ],
+                    };
                 } else {
                     json = { ok: true, known_oc: [], messages: [], commands: [], folders: [] };
                 }
@@ -108,7 +117,12 @@ function startMockApi(workspace) {
                 if (state.resolveCommand) state.resolveCommand(state.command);
             } else if (action === 'proc_result') {
                 try { state.proc = JSON.parse(raw || '{}'); } catch (e) { state.proc = {}; }
+                if (state.proc && state.proc.id != null) state.procById[state.proc.id] = state.proc;
                 if (state.resolveProc) state.resolveProc(state.proc);
+                if (state.proc && state.waitProc[state.proc.id]) {
+                    state.waitProc[state.proc.id](state.proc);
+                    delete state.waitProc[state.proc.id];
+                }
             } else if (action === 'session_import') {
                 try { state.import = JSON.parse(raw || '{}'); } catch (e) { state.import = {}; }
                 if (state.resolveImport) state.resolveImport(state.import);
@@ -136,6 +150,15 @@ function startMockApi(workspace) {
     });
 }
 
+// Espera el proc_result de un id concreto (varios proc_detect en el mismo tick).
+function waitProc(api, id, timeoutMs) {
+    if (api.procById[id]) return Promise.resolve(api.procById[id]);
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timeout esperando "proc_result" #' + id)), timeoutMs || 15000);
+        api.waitProc[id] = (p) => { clearTimeout(timer); resolve(p); };
+    });
+}
+
 function killTree(pid) {
     if (!pid) return;
     try {
@@ -158,6 +181,20 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     fs.mkdirSync(path.join(proj, 'public'), { recursive: true });
     fs.writeFileSync(path.join(proj, 'package.json'), JSON.stringify({ name: 'demo', scripts: { dev: 'vite' } }, null, 2));
     fs.writeFileSync(path.join(proj, 'public', 'index.php'), '<?php echo 1;');
+    // Gestores alternativos: lockfile (pnpm/bun) y campo packageManager (yarn,
+    // que ademas gana sobre un lockfile de otro gestor presente).
+    const projPnpm = path.join(ws, 'proj-pnpm');
+    fs.mkdirSync(projPnpm, { recursive: true });
+    fs.writeFileSync(path.join(projPnpm, 'package.json'), JSON.stringify({ name: 'pnpm-demo', scripts: { dev: 'vite' } }, null, 2));
+    fs.writeFileSync(path.join(projPnpm, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    const projYarn = path.join(ws, 'proj-yarn');
+    fs.mkdirSync(projYarn, { recursive: true });
+    fs.writeFileSync(path.join(projYarn, 'package.json'), JSON.stringify({ name: 'yarn-demo', packageManager: 'yarn@4.1.0', scripts: { dev: 'vite' } }, null, 2));
+    fs.writeFileSync(path.join(projYarn, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    const projBun = path.join(ws, 'proj-bun');
+    fs.mkdirSync(projBun, { recursive: true });
+    fs.writeFileSync(path.join(projBun, 'package.json'), JSON.stringify({ name: 'bun-demo', scripts: { start: 'bun run index.ts' } }, null, 2));
+    fs.writeFileSync(path.join(projBun, 'bun.lockb'), 'bun\n');
 
     const mock = path.join(base, 'mock-opencode.js');
     fs.writeFileSync(mock, MOCK_OC);
@@ -248,6 +285,15 @@ test('bridge e2e: mensaje -> opencode mock -> respond', async (t) => {
     const det = JSON.parse(procDone.text);
     assert.ok(det.suggestions.some((s) => s.cmd === 'npm run dev'), 'detecta npm run dev');
     assert.ok(det.suggestions.some((s) => s.cmd.indexOf('php -S') === 0), 'detecta php -S');
+
+    // proc_detect con otros gestores: lockfile -> pnpm/bun, packageManager ->
+    // yarn (y le gana al lockfile pnpm que hay en ese proyecto).
+    const detPnpm = JSON.parse((await waitProc(api, 20)).text);
+    assert.ok(detPnpm.suggestions.some((s) => s.cmd === 'pnpm run dev'), 'pnpm-lock.yaml detecta pnpm run dev');
+    const detYarn = JSON.parse((await waitProc(api, 21)).text);
+    assert.ok(detYarn.suggestions.some((s) => s.cmd === 'yarn run dev'), 'packageManager gana sobre el lockfile');
+    const detBun = JSON.parse((await waitProc(api, 22)).text);
+    assert.ok(detBun.suggestions.some((s) => s.cmd === 'bun start'), 'bun.lockb detecta bun start');
 
     // session_sync: el comando de la web fuerza el export/import de una sesión.
     let impTimer = null;

@@ -22,7 +22,7 @@ const DEFAULT_BRIDGE = {
     bridgeName: '',
     processes: {
         enabled: true,
-        allow: ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn'],
+        allow: ['npm', 'node', 'npx', 'php', 'python', 'python3', 'composer', 'pnpm', 'yarn', 'bun', 'bunx'],
         maxGlobal: 3,
     },
 };

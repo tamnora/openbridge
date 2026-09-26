@@ -156,6 +156,23 @@ vigila la base de opencode (`opencode.db`) y sincroniza a los pocos segundos
 revés), los mensajes nuevos se agregan sin duplicarse: el merge identifica cada
 mensaje por su id de opencode (`oc_msg`).
 
+## Chat: pestañas y formato
+
+Al abrir un chat queda como **pestaña** en una barra bajo el encabezado: se
+acumulan las sesiones abiertas (con punto de estado `trabajando`/`esperando` y
+botón para cerrar), se cambia entre ellas con un toque y se recuerdan en el
+navegador (`localStorage`). Cerrar la pestaña activa pasa a la vecina. Clic del
+medio también cierra.
+
+El texto del agente se renderiza con un markdown ligero (sin dependencias):
+encabezados, listas (incluidas **anidadas** y `- [ ]`/`- [x]` como casillas),
+citas, separadores, **tablas** con alineación, **URLs desnudas** como enlaces,
+**imágenes** `![alt](url)`, negrita/cursiva/tachado y bloques de código con
+resaltado. Las **tool cards** muestran el diff de las ediciones con su ruta y
+duración; cada turno muestra su duración y el medidor de contexto incluye los
+tokens de cache en el detalle. Todo esto funciona igual en el hub Node y en el
+hub PHP (el front se comparte).
+
 ## Panel del proyecto y dev run (escritorio)
 
 En pantallas de escritorio la app muestra un **panel derecho** (botón `▥` en el
@@ -171,7 +188,11 @@ Para arrancar el server de desarrollo, la vista **procs** detecta cómo correr
 cada proyecto (`proc_detect`): mira `package.json` (scripts `dev`/`start`/`serve`/
 `preview`), `composer.json`/`artisan` y entrypoints PHP (`public/index.php`,
 `backend/public/index.php`, `index.php`), y ofrece los comandos como chips.
-Recuerda el último comando usado por carpeta.
+El gestor de paquetes se elige por el campo `packageManager` de `package.json` y,
+si no está, por el lockfile (`pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`,
+`bun.lockb`/`bun.lock` → `bun`; `npm` es el default), así que sugiere
+`pnpm run dev`, `bun start`, etc. según corresponda. Recuerda el último comando
+usado por carpeta.
 
 El puente solo ejecuta binarios permitidos en `bridge/config.json`:
 
@@ -179,14 +200,15 @@ El puente solo ejecuta binarios permitidos en `bridge/config.json`:
 {
   "processes": {
     "enabled": true,
-    "allow": ["npm", "node", "npx", "php", "python", "composer"],
+    "allow": ["npm", "node", "npx", "php", "python", "composer", "pnpm", "yarn", "bun"],
     "bins": { "php": "C:\\xampp\\php\\php.exe" }
   }
 }
 ```
 
-`allow` es la lista blanca (ya trae `php`/`python`/`composer`; una config con el
-default viejo `npm`/`node`/`npx` se actualiza sola al actualizar OpenBridge). `bins`
+`allow` es la lista blanca (ya trae `php`/`python`/`composer` y los gestores
+`pnpm`/`yarn`/`bun`/`bunx`; una config con un default viejo se actualiza sola al
+actualizar OpenBridge). `bins`
 mapea un nombre a una ruta absoluta cuando el ejecutable **no** está en el `PATH`.
 Los comandos corren **sin shell** y con `cwd` dentro del workspace.
 
